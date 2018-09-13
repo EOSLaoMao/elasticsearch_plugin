@@ -24,13 +24,13 @@ cp "lib/libcpr.so" "/usr/local/lib/libcpr.so"
 
 ### Embed `elasticsearch_plugin` into `nodeos`
 
-1. Get `elasticsearch_plugin` source code .
+1. Get `elasticsearch_plugin` source code.
 
 ```bash
-git clone https://github.com/EOSLaoMao/elasticsearch_plugin.git /plugins/elasticsearch_plugin
+git clone https://github.com/EOSLaoMao/elasticsearch_plugin.git plugins/elasticsearch_plugin
 ```
 
-2. Add subdirectory in `plugins/CMakeLists.txt`
+2. Add subdirectory to `plugins/CMakeLists.txt`.
 
 ```cmake
 ...
@@ -41,7 +41,7 @@ add_subdirectory(elasticsearch_plugin) # add this line.
 ...
 ```
 
-3. Link `libelasticsearch_plugin.a` into `nodeos`
+3. Add following line to `programs/nodeos/CMakeList.txt`.
 
 ```cmake
 target_link_libraries(
