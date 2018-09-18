@@ -792,8 +792,8 @@ bool elasticsearch_plugin_impl::add_action_trace( elasticlient::SameIndexBulkDat
       fc::mutable_variant_object action_traces_doc;
       const chain::base_action_trace& base = atrace; // without inline action traces
 
-      action_traces_doc["type"] = action_traces_type;
       fc::from_variant( to_variant_with_abi( base ), action_traces_doc );
+      action_traces_doc["type"] = action_traces_type;
       action_traces_doc["createdAt"] = now.count();
 
       auto json = fc::json::to_string(action_traces_doc);
@@ -844,8 +844,6 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    block_doc["type"] = blocks_type;
    block_doc["block_num"] = static_cast<int32_t>(block_num);
    block_doc["block_id"] = block_id_str;
-   block_doc["irreversible"] = false;
-
    block_doc["block"] = to_variant_with_abi( *bs->block );
    block_doc["createAt"] = now.count();
 
