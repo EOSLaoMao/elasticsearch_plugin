@@ -43,4 +43,33 @@ const static std::string elastic_mappings = R"(
 }
 )";
 
+const static std::string accounts_mappings = R"(
+{
+    "mappings": {
+        "_doc": {
+            "properties": {
+                "name": {
+                    "type": "text"
+                },
+                "pub_keys": {
+                    "type": "nested"
+                },
+                "account_controls": {
+                    "type": "nested"
+                },
+                "abi": {
+                    "enabled": false
+                },
+                "createAt": {
+                    "type": "date"
+                },
+                "updateAt": {
+                    "type": "date"
+                }
+            }
+        }
+    }
+}
+)";
+
 }
