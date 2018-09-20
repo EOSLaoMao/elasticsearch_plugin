@@ -24,7 +24,7 @@
 
 
 #include <queue>
-
+#include <stack>
 
 #include "elasticsearch_client.hpp"
 #include "exceptions.hpp"
@@ -171,9 +171,6 @@ public:
    static const std::string trans_type;
    static const std::string trans_traces_type;
    static const std::string action_traces_type;
-   static const std::string accounts_type;
-   static const std::string pub_keys_type;
-   static const std::string account_controls_type;
 };
 
 const action_name elasticsearch_plugin_impl::newaccount = chain::newaccount::get_name();
@@ -188,9 +185,6 @@ const std::string elasticsearch_plugin_impl::blocks_type = "blocks";
 const std::string elasticsearch_plugin_impl::trans_type = "transactions";
 const std::string elasticsearch_plugin_impl::trans_traces_type = "transaction_traces";
 const std::string elasticsearch_plugin_impl::action_traces_type = "action_traces";
-const std::string elasticsearch_plugin_impl::accounts_type = "accounts";
-const std::string elasticsearch_plugin_impl::pub_keys_type = "pub_keys";
-const std::string elasticsearch_plugin_impl::account_controls_type = "account_controls";
 
 bool elasticsearch_plugin_impl::filter_include( const chain::action& act ) const {
    bool include = false;
@@ -751,10 +745,6 @@ bool elasticsearch_plugin_impl::add_action_trace( elasticlient::SameIndexBulkDat
       added = true;
    }
 
-   for( const auto& iline_atrace : atrace.inline_traces ) {
-      added |= add_action_trace( bulk_action_traces, iline_atrace, executed, now );
-   }
-
    return added;
 }
 
@@ -935,9 +925,22 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
    bool write_atraces = false;
    bool executed = t->receipt.valid() && t->receipt->status == chain::transaction_receipt_header::executed;
 
-   for( const auto& atrace : t->action_traces ) {
+   std::stack<std::reference_wrapper<chain::action_trace>> stack;
+   for( auto& atrace : t->action_traces ) {
       try {
-         write_atraces |= add_action_trace( bulk_action_traces, atrace, executed, now );
+         stack.emplace(atrace);
+
+         while ( !stack.empty() )
+         {
+            auto &atrace = stack.top();
+            stack.pop();
+            write_atraces |= add_action_trace( bulk_action_traces, atrace, executed, now );
+            auto &inline_traces = atrace.get().inline_traces;
+            for( auto it = inline_traces.rbegin(); it != inline_traces.rend(); ++it ) {
+               stack.emplace(*it);
+            }
+         }
+
       } catch(...) {
          handle_elasticsearch_exception("add action traces", __LINE__);
       }
