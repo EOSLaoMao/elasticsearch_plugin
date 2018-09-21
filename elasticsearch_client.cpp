@@ -21,9 +21,9 @@ bool is_2xx(int32_t status_code)
 }
 } // namespace
 
-bool elasticsearch_client::index_exists(const std::string &index_name)
+bool elasticsearch_client::head(const std::string &url_path)
 {
-   cpr::Response resp = client.performRequest(elasticlient::Client::HTTPMethod::HEAD, index_name, "");
+   cpr::Response resp = client.performRequest(elasticlient::Client::HTTPMethod::HEAD, url_path, "");
    if ( is_2xx(resp.status_code) ) {
       return true;
    } else if ( resp.status_code == 404 ) {
@@ -33,15 +33,29 @@ bool elasticsearch_client::index_exists(const std::string &index_name)
    }
 }
 
+bool elasticsearch_client::doc_exist(const std::string &index_name, const std::string &id)
+{
+   auto url = boost::str(boost::format("%1%/_doc/%2%") % index_name % id );
+   return head(url);
+}
+
 void elasticsearch_client::index(const std::string &index_name, const std::string &body, const std::string &id)
 {
    cpr::Response resp = client.index(index_name, "_doc", id, body);
    EOS_ASSERT(is_2xx(resp.status_code), chain::response_code_exception, "${code} ${text}", ("code", resp.status_code)("text", resp.text));
 }
 
+uint32_t elasticsearch_client::create(const std::string &index_name, const std::string &body, const std::string &id)
+{
+   auto url = boost::str(boost::format("%1%/_doc/%2%/_create") % index_name % id );
+   cpr::Response resp = client.performRequest(elasticlient::Client::HTTPMethod::PUT, url, body);
+   return resp.status_code;
+}
+
+
 void elasticsearch_client::init_index(const std::string &index_name, const std::string &mappings)
 {
-   if ( !index_exists(index_name) ) {
+   if ( !head(index_name) ) {
       cpr::Response resp = client.performRequest(elasticlient::Client::HTTPMethod::PUT, index_name, mappings);
       EOS_ASSERT(is_2xx(resp.status_code), chain::response_code_exception, "${code} ${text}", ("code", resp.status_code)("text", resp.text));
    }
@@ -85,7 +99,7 @@ void elasticsearch_client::delete_by_query(const std::string &index_name, const 
    EOS_ASSERT(is_2xx(resp.status_code), chain::response_code_exception, "${code} ${text}", ("code", resp.status_code)("text", resp.text));
 }
 
-void elasticsearch_client::bulk_perform(const std::string &index_name, elasticlient::SameIndexBulkData &bulk)
+void elasticsearch_client::bulk_perform(elasticlient::SameIndexBulkData &bulk)
 {
    size_t errors = bulk_indexer.perform(bulk);
    EOS_ASSERT(errors == 0, chain::bulk_fail_exception, "bulk perform error num: ${errors}", ("errors", errors));

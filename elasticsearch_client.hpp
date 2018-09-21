@@ -14,14 +14,16 @@ public:
       :client(url_list, user, password), bulk_indexer(url_list, user, password){};
 
    void delete_index(const std::string &index_name);
-   bool index_exists(const std::string &index_name);
    void init_index(const std::string &index_name, const std::string &mappings);
-   bool get(const std::string &index_name, const std::string &id,  fc::variant &res);
+   bool head(const std::string &url_path);
+   bool doc_exist(const std::string &index_name, const std::string &id);
+   bool get(const std::string &index_name, const std::string &id, fc::variant &res);
    void index(const std::string &index_name, const std::string &body, const std::string &id = std::string());
+   uint32_t create(const std::string &index_name, const std::string &body, const std::string &id);
    uint64_t count_doc(const std::string &index_name, const std::string &query = std::string());
    void search(const std::string &index_name, fc::variant& v, const std::string &query);
    void delete_by_query(const std::string &index_name, const std::string &query);
-   void bulk_perform(const std::string &index_name, elasticlient::SameIndexBulkData &bulk);
+   void bulk_perform(elasticlient::SameIndexBulkData &bulk);
    void update(const std::string &index_name, const std::string &id, const std::string &body);
 
    std::string index_name;

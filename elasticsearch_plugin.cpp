@@ -96,8 +96,6 @@ public:
    void delete_account_auth( const chain::deleteauth& del, std::chrono::milliseconds& now );
    void upsert_account_setabi( const chain::setabi& setabi, std::chrono::milliseconds& now );
 
-   bool find_block( fc::variant& v, const std::string& id );
-
    /// @return true if act should be added to elasticsearch, false to skip it
    bool filter_include( const chain::action& act ) const;
 
@@ -166,11 +164,12 @@ public:
    static const permission_name owner;
    static const permission_name active;
 
-   static const std::string block_states_type;
-   static const std::string blocks_type;
-   static const std::string trans_type;
-   static const std::string trans_traces_type;
-   static const std::string action_traces_type;
+   static const std::string accounts_index;
+   static const std::string blocks_index;
+   static const std::string trans_index;
+   static const std::string block_states_index;
+   static const std::string trans_traces_index;
+   static const std::string action_traces_index;
 };
 
 const action_name elasticsearch_plugin_impl::newaccount = chain::newaccount::get_name();
@@ -180,11 +179,12 @@ const action_name elasticsearch_plugin_impl::deleteauth = chain::deleteauth::get
 const permission_name elasticsearch_plugin_impl::owner = chain::config::owner_name;
 const permission_name elasticsearch_plugin_impl::active = chain::config::active_name;
 
-const std::string elasticsearch_plugin_impl::block_states_type = "block_states";
-const std::string elasticsearch_plugin_impl::blocks_type = "blocks";
-const std::string elasticsearch_plugin_impl::trans_type = "transactions";
-const std::string elasticsearch_plugin_impl::trans_traces_type = "transaction_traces";
-const std::string elasticsearch_plugin_impl::action_traces_type = "action_traces";
+const std::string elasticsearch_plugin_impl::accounts_index = "accounts";
+const std::string elasticsearch_plugin_impl::blocks_index = "blocks";
+const std::string elasticsearch_plugin_impl::trans_index = "transactions";
+const std::string elasticsearch_plugin_impl::block_states_index = "block_states";
+const std::string elasticsearch_plugin_impl::trans_traces_index = "transaction_traces";
+const std::string elasticsearch_plugin_impl::action_traces_index = "action_traces";
 
 bool elasticsearch_plugin_impl::filter_include( const chain::action& act ) const {
    bool include = false;
@@ -316,7 +316,7 @@ void elasticsearch_plugin_impl::purge_abi_cache() {
 
 bool elasticsearch_plugin_impl::get_abi_by_account(fc::variant &v, const account_name &name) {
    fc::variant res;
-   if ( !elastic_client->get("accounts", std::to_string(name.value), res) )
+   if ( !elastic_client->get(accounts_index, std::to_string(name.value), res) )
       return false;
 
    try {
@@ -541,7 +541,7 @@ void elasticsearch_plugin_impl::create_new_account( const chain::newaccount& new
    auto json = fc::json::to_string( account_doc );
 
    try {
-      elastic_client->index( "accounts", json, id );
+      elastic_client->index( accounts_index, json, id );
    } catch( ... ) {
       handle_elasticsearch_exception( "create_new_account" + json, __LINE__ );
    }
@@ -595,7 +595,7 @@ void elasticsearch_plugin_impl::update_account_auth( const chain::updateauth& up
 
 
    try {
-      elastic_client->update( "accounts", id, json );
+      elastic_client->update( accounts_index, id, json );
    } catch( ... ) {
       handle_elasticsearch_exception( "create_new_account" + json, __LINE__ );
    }
@@ -628,7 +628,7 @@ void elasticsearch_plugin_impl::delete_account_auth( const chain::deleteauth& de
    auto json = fc::json::to_string( fc::variant_object( "script", script_doc) );
 
    try {
-      elastic_client->update( "accounts", id, json);
+      elastic_client->update( accounts_index, id, json);
    } catch( ... ) {
       handle_elasticsearch_exception( "delete_account_auth" + json, __LINE__ );
    }
@@ -652,44 +652,11 @@ void elasticsearch_plugin_impl::upsert_account_setabi( const chain::setabi& seta
    auto json = fc::json::to_string( doc );
 
    try {
-      elastic_client->update( "accounts", id, json );
+      elastic_client->update( accounts_index, id, json );
    } catch( ... ) {
       handle_elasticsearch_exception( "upsert_account_setabi" + json, __LINE__ );
    }
 }
-
-bool elasticsearch_plugin_impl::find_block( fc::variant& v, const std::string& id )
-{
-   fc::variant res;
-   auto query_pattern = R"(
-{
-  "query": {
-    "bool": {
-      "must": {
-        "match": {
-          "block_id": "%1%"
-        }
-      },
-      "filter": {
-        "match": {
-          "type": "blocks"
-        }
-      }
-    }
-  }
-}
-)";
-   std::string query = boost::str(boost::format(query_pattern) % id);
-   elastic_client->search("eos", res, query);
-
-   if(res["hits"]["total"] != 1) return false;
-
-   size_t pos = 0;
-   v = res["hits"]["hits"][pos];
-
-   return true;
-}
-
 
 void elasticsearch_plugin_impl::upsert_account(const chain::action& act)
 {
@@ -737,7 +704,6 @@ bool elasticsearch_plugin_impl::add_action_trace( elasticlient::SameIndexBulkDat
       const chain::base_action_trace& base = atrace; // without inline action traces
 
       fc::from_variant( to_variant_with_abi( base ), action_traces_doc );
-      action_traces_doc["type"] = action_traces_type;
       action_traces_doc["createdAt"] = now.count();
 
       auto json = fc::json::to_string(action_traces_doc);
@@ -754,13 +720,6 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    if( block_num % 1000 == 0 )
       ilog( "block_num: ${b}", ("b", block_num) );
 
-   try {
-      if( block_num > 3000)
-         EOS_THROW(fc::exception, "reach 3000 block");
-   } catch( ... ) {
-      handle_elasticsearch_exception( "reach block 3000", __LINE__ );
-   }
-
    const auto block_id = bs->id;
    const auto block_id_str = block_id.str();
    const auto prev_block_id_str = bs->block->previous.str();
@@ -769,7 +728,6 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
    fc::mutable_variant_object block_state_doc;
-   block_state_doc["type"] = block_states_type;
    block_state_doc["block_num"] = static_cast<int32_t>(block_num);
    block_state_doc["block_id"] = block_id_str;
    block_state_doc["validated"] = bs->validated;
@@ -780,7 +738,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    auto block_states_json = fc::json::to_string( block_state_doc );
 
    try {
-      elastic_client->index( "eos", block_states_json );
+      elastic_client->index( block_states_index, block_states_json );
    } catch( ... ) {
       handle_elasticsearch_exception( "block_states index:" + block_states_json, __LINE__ );
    }
@@ -789,18 +747,18 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
 
    fc::mutable_variant_object block_doc;
 
-   block_doc["type"] = blocks_type;
    block_doc["block_num"] = static_cast<int32_t>(block_num);
    block_doc["block_id"] = block_id_str;
    block_doc["block"] = to_variant_with_abi( *bs->block );
+   block_doc["irreversible"] = false;
    block_doc["createAt"] = now.count();
 
-   auto block_json = fc::json::to_string( block_doc );
+   auto json = fc::json::to_string( block_doc );
 
    try {
-      elastic_client->index( "eos", block_json );
+      elastic_client->create( blocks_index, json, block_id_str );
    } catch( ... ) {
-      handle_elasticsearch_exception( "blocks index:" + block_json, __LINE__ );
+      handle_elasticsearch_exception( "blocks index:" + json, __LINE__ );
    }
 }
 
@@ -814,11 +772,15 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
    if( store_blocks ) {
-      fc::variant ir_block;
-      if( !find_block( ir_block, block_id_str ) ) {
-         _process_accepted_block( bs );
-         if( !find_block( ir_block, block_id_str ) ) return; // should never happen
+      bool exist = false;
+      try {
+         exist = elastic_client->doc_exist( blocks_index, block_id_str );
+      } catch( ... ) {
+         handle_elasticsearch_exception( "check block exist", __LINE__ );
       }
+
+      if ( !exist )
+         _process_accepted_block( bs );
 
       fc::mutable_variant_object doc;
       doc["irreversible"] = true;
@@ -829,7 +791,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       auto json = fc::json::to_string( fc::variant_object("doc", doc) );
 
       try {
-         elastic_client->update( "eos", ir_block["_id"].as_string(), json );
+         elastic_client->update( blocks_index, block_id_str, json );
       } catch( ... ) {
          handle_elasticsearch_exception( "update block", __LINE__ );
       }
@@ -839,7 +801,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
 
    bool transactions_in_block = false;
 
-   elasticlient::SameIndexBulkData bulk_trans("eos");
+   elasticlient::SameIndexBulkData bulk_trans(trans_index);
 
    for( const auto& receipt : bs->block->transactions ) {
       string trx_id_str;
@@ -860,16 +822,15 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       doc["block_num"] = static_cast<int32_t>(block_num);
       doc["updatedAt"] = now.count();
 
-      auto doc_json = fc::json::to_string(doc);
-      auto query = boost::str(boost::format(R"({ "doc": %1%})") % doc_json);
+      auto json = fc::json::to_string( fc::variant_object("doc", doc) );
 
-      bulk_trans.updateDocument("_doc", trx_id_str, query);
+      bulk_trans.updateDocument("_doc", trx_id_str, json);
       transactions_in_block = true;
    }
 
    if( transactions_in_block ) {
       try {
-         elastic_client->bulk_perform("eos", bulk_trans);
+         elastic_client->bulk_perform(bulk_trans);
       } catch( ... ) {
          handle_elasticsearch_exception( "bulk transaction update", __LINE__ );
       }
@@ -904,14 +865,13 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    trans_doc["implicit"] = t->implicit;
    trans_doc["scheduled"] = t->scheduled;
    trans_doc["createdAt"] = now.count();
-   trans_doc["type"] = trans_type;
 
-   auto trans_json = fc::json::to_string( trans_doc );
+   auto json = fc::json::to_string( trans_doc );
 
    try {
-      elastic_client->index("eos", trans_json, trx_id_str);
+      elastic_client->create(trans_index, json, trx_id_str);
    } catch( ... ) {
-      handle_elasticsearch_exception( "trans index:" + trans_json, __LINE__ );
+      handle_elasticsearch_exception( "trans index:" + json, __LINE__ );
    }
 }
 
@@ -919,7 +879,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
-   elasticlient::SameIndexBulkData bulk_action_traces("eos");
+   elasticlient::SameIndexBulkData bulk_action_traces(action_traces_index);
 
    fc::mutable_variant_object trans_traces_doc;
    bool write_atraces = false;
@@ -948,7 +908,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
 
    if( write_atraces ) {
       try {
-         elastic_client->bulk_perform("eos", bulk_action_traces);
+         elastic_client->bulk_perform(bulk_action_traces);
       } catch( ... ) {
          handle_elasticsearch_exception( "action traces", __LINE__ );
       }
@@ -960,11 +920,10 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
    // transaction trace index
    fc::from_variant( to_variant_with_abi( *t ), trans_traces_doc );
    trans_traces_doc["createAt"] = now.count();
-   trans_traces_doc["type"] = trans_traces_type;
 
    std::string json = fc::json::to_string( trans_traces_doc );
    try {
-      elastic_client->index("eos", json);
+      elastic_client->index(trans_traces_index, json);
    } catch( ... ) {
       handle_elasticsearch_exception( "trans_traces index: " + json, __LINE__ );
    }
@@ -1021,7 +980,7 @@ void elasticsearch_plugin_impl::consume_blocks() {
          }
          auto time = fc::time_point::now() - start_time;
          auto per = size > 0 ? time.count()/size : 0;
-         if( time > fc::microseconds(500000) ) // reduce logging, .5 secs
+         if( time > fc::seconds(5) ) // reduce logging, 5 secs
             ilog( "process_applied_transaction,  time per: ${p}, size: ${s}, time: ${t}", ("s", size)("t", time)("p", per) );
 
          start_time = fc::time_point::now();
@@ -1033,7 +992,7 @@ void elasticsearch_plugin_impl::consume_blocks() {
          }
          time = fc::time_point::now() - start_time;
          per = size > 0 ? time.count()/size : 0;
-         if( time > fc::microseconds(500000) ) // reduce logging, .5 secs
+         if( time > fc::seconds(5) ) // reduce logging, 5 secs
             ilog( "process_accepted_transaction, time per: ${p}, size: ${s}, time: ${t}", ("s", size)( "t", time )( "p", per ));
 
          // process blocks
@@ -1046,7 +1005,7 @@ void elasticsearch_plugin_impl::consume_blocks() {
          }
          time = fc::time_point::now() - start_time;
          per = size > 0 ? time.count()/size : 0;
-         if( time > fc::microseconds(500000) ) // reduce logging, .5 secs
+         if( time > fc::seconds(5) ) // reduce logging, 5 secs
             ilog( "process_accepted_block,       time per: ${p}, size: ${s}, time: ${t}", ("s", size)("t", time)("p", per) );
 
          // process irreversible blocks
@@ -1059,7 +1018,7 @@ void elasticsearch_plugin_impl::consume_blocks() {
          }
          time = fc::time_point::now() - start_time;
          per = size > 0 ? time.count()/size : 0;
-         if( time > fc::microseconds(500000) ) // reduce logging, .5 secs
+         if( time > fc::seconds(5) ) // reduce logging, 5 secs
             ilog( "process_irreversible_block,   time per: ${p}, size: ${s}, time: ${t}", ("s", size)("t", time)("p", per) );
 
          if( transaction_metadata_size == 0 &&
@@ -1083,17 +1042,24 @@ void elasticsearch_plugin_impl::consume_blocks() {
 
 void elasticsearch_plugin_impl::delete_index() {
    ilog("drop elasticsearch index");
-   elastic_client->delete_index("eos");
-   elastic_client->delete_index("accounts");
+   elastic_client->delete_index( accounts_index );
+   elastic_client->delete_index( blocks_index );
+   elastic_client->delete_index( trans_index );
+   elastic_client->delete_index( block_states_index );
+   elastic_client->delete_index( trans_traces_index );
+   elastic_client->delete_index( action_traces_index );
 }
 
 void elasticsearch_plugin_impl::init() {
    ilog("create elasticsearch index");
-   elastic_client->init_index( "eos", elastic_mappings );
-   elastic_client->init_index( "accounts", accounts_mappings );
+   elastic_client->init_index( accounts_index, accounts_mappings );
+   elastic_client->init_index( blocks_index, elastic_mappings );
+   elastic_client->init_index( trans_index, elastic_mappings );
+   elastic_client->init_index( block_states_index, elastic_mappings );
+   elastic_client->init_index( trans_traces_index, elastic_mappings );
+   elastic_client->init_index( action_traces_index, elastic_mappings );
 
-
-   if (elastic_client->count_doc("accounts") == 0) {
+   if (elastic_client->count_doc(accounts_index) == 0) {
       auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
       struct chain::newaccount newacc = {};
