@@ -1052,12 +1052,12 @@ void elasticsearch_plugin_impl::delete_index() {
 
 void elasticsearch_plugin_impl::init() {
    ilog("create elasticsearch index");
-   elastic_client->init_index( accounts_index, accounts_mappings );
-   elastic_client->init_index( blocks_index, elastic_mappings );
-   elastic_client->init_index( trans_index, elastic_mappings );
-   elastic_client->init_index( block_states_index, elastic_mappings );
-   elastic_client->init_index( trans_traces_index, elastic_mappings );
-   elastic_client->init_index( action_traces_index, elastic_mappings );
+   elastic_client->init_index( accounts_index, accounts_mapping );
+   elastic_client->init_index( blocks_index, blocks_mapping );
+   elastic_client->init_index( trans_index, trans_mapping );
+   elastic_client->init_index( block_states_index, block_states_mapping );
+   elastic_client->init_index( trans_traces_index, trans_traces_mapping );
+   elastic_client->init_index( action_traces_index, action_traces_mapping );
 
    if (elastic_client->count_doc(accounts_index) == 0) {
       auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
