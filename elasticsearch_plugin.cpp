@@ -501,7 +501,7 @@ void elasticsearch_plugin_impl::create_new_account( const chain::newaccount& new
 {
    fc::mutable_variant_object account_doc;
    fc::variants pub_keys;
-   fc::variants control_accounts;
+   fc::variants account_controls;
 
    account_doc["name"] = newacc.name.to_string();
    account_doc["createAt"] = now.count();
@@ -510,14 +510,14 @@ void elasticsearch_plugin_impl::create_new_account( const chain::newaccount& new
       fc::mutable_variant_object account_entry;
       account_entry( "permission", owner.to_string());
       account_entry( "name", account.permission.actor.to_string());
-      control_accounts.emplace_back(account_entry);
+      account_controls.emplace_back(account_entry);
    }
 
    for( const auto& account : newacc.active.accounts ) {
       fc::mutable_variant_object account_entry;
       account_entry( "permission", active.to_string());
       account_entry( "name", account.permission.actor.to_string());
-      control_accounts.emplace_back(account_entry);
+      account_controls.emplace_back(account_entry);
    }
 
    for( const auto& pub_key_weight : newacc.owner.keys ) {
@@ -535,7 +535,7 @@ void elasticsearch_plugin_impl::create_new_account( const chain::newaccount& new
    }
 
    account_doc["pub_keys"] = pub_keys;
-   account_doc["control_accounts"] = control_accounts;
+   account_doc["account_controls"] = account_controls;
 
    auto id = std::to_string(newacc.name.value);
    auto json = fc::json::to_string( account_doc );
@@ -567,7 +567,7 @@ void elasticsearch_plugin_impl::update_account_auth( const chain::updateauth& up
    fc::mutable_variant_object script_doc( fc::json::from_string(script) );
    fc::mutable_variant_object params_doc;
    fc::variants pub_keys;
-   fc::variants control_accounts;
+   fc::variants account_controls;
 
    for( const auto& pub_key_weight : update.auth.keys ) {
       fc::mutable_variant_object key_entry;
@@ -580,12 +580,12 @@ void elasticsearch_plugin_impl::update_account_auth( const chain::updateauth& up
       fc::mutable_variant_object account_entry;
       account_entry( "permission", update.permission.to_string());
       account_entry( "name", account.permission.actor.to_string());
-      control_accounts.emplace_back(account_entry);
+      account_controls.emplace_back(account_entry);
    }
 
    params_doc["permission"] = update.permission.to_string();
    params_doc["pub_keys"] = pub_keys;
-   params_doc["account_controls"] = control_accounts;
+   params_doc["account_controls"] = account_controls;
    params_doc["updateAt"] = now.count();
 
    script_doc["params"] = params_doc;
@@ -597,7 +597,7 @@ void elasticsearch_plugin_impl::update_account_auth( const chain::updateauth& up
    try {
       elastic_client->update( accounts_index, id, json );
    } catch( ... ) {
-      handle_elasticsearch_exception( "create_new_account" + json, __LINE__ );
+      handle_elasticsearch_exception( "update_account_auth" + json, __LINE__ );
    }
 }
 
