@@ -105,6 +105,12 @@ static const std::string trans_traces_mapping = R"(
                 },
                 "action_traces": {
                     "enabled": false
+                },
+                "failed_dtrx_trace": {
+                    "enabled": false
+                },
+                "except": {
+                    "enabled": false
                 }
             }
         }
