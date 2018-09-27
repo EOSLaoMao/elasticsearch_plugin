@@ -257,7 +257,9 @@ void elasticsearch_plugin_impl::queue( Queue& queue, const Entry& e ) {
 
 void elasticsearch_plugin_impl::accepted_transaction( const chain::transaction_metadata_ptr& t ) {
    try {
-      queue( transaction_metadata_queue, t );
+      if( store_transactions ) {
+         queue( transaction_metadata_queue, t );
+      }
    } catch (fc::exception& e) {
       elog("FC Exception while accepted_transaction ${e}", ("e", e.to_string()));
    } catch (std::exception& e) {
@@ -269,6 +271,29 @@ void elasticsearch_plugin_impl::accepted_transaction( const chain::transaction_m
 
 void elasticsearch_plugin_impl::applied_transaction( const chain::transaction_trace_ptr& t ) {
    try {
+      // Traces emitted from an incomplete block leave the producer_block_id as empty.
+      //
+      // Avoid adding the action traces or transaction traces to the database if the producer_block_id is empty.
+      // This way traces from speculatively executed transactions are not included in the Elasticsearch which can
+      // avoid potential confusion for consumers of that database.
+      //
+      // Due to forks, it could be possible for multiple incompatible action traces with the same block_num and trx_id
+      // to exist in the database. And if the producer double produces a block, even the block_time may not
+      // disambiguate the two action traces. Without a producer_block_id to disambiguate and determine if the action
+      // trace comes from an orphaned fork branching off of the blockchain, consumers of the Mongo DB database may be
+      // reacting to a stale action trace that never actually executed in the current blockchain.
+      //
+      // It is better to avoid this potential confusion by not logging traces from speculative execution, i.e. emitted
+      // from an incomplete block. This means that traces will not be recorded in speculative read-mode, but
+      // users should not be using the elasticsearch_plugin in that mode anyway.
+      //
+      // Allow logging traces if node is a producer for testing purposes, so a single nodeos can do both for testing.
+      //
+      // It is recommended to run elasticsearch_plugin in read-mode = read-only.
+      //
+      if( !t->producer_block_id.valid() )
+         return;
+      // always queue since account information always gathered
       queue( transaction_trace_queue, t );
    } catch (fc::exception& e) {
       elog("FC Exception while applied_transaction ${e}", ("e", e.to_string()));
@@ -281,7 +306,9 @@ void elasticsearch_plugin_impl::applied_transaction( const chain::transaction_tr
 
 void elasticsearch_plugin_impl::applied_irreversible_block( const chain::block_state_ptr& bs ) {
    try {
-      queue( irreversible_block_state_queue, bs );
+      if( store_blocks || store_block_states || store_transactions ) {
+         queue( irreversible_block_state_queue, bs );
+      }
    } catch (fc::exception& e) {
       elog("FC Exception while applied_irreversible_block ${e}", ("e", e.to_string()));
    } catch (std::exception& e) {
@@ -293,7 +320,14 @@ void elasticsearch_plugin_impl::applied_irreversible_block( const chain::block_s
 
 void elasticsearch_plugin_impl::accepted_block( const chain::block_state_ptr& bs ) {
    try {
-      queue( block_state_queue, bs );
+      if( !start_block_reached ) {
+         if( bs->block_num >= start_block_num ) {
+            start_block_reached = true;
+         }
+      }
+      if( store_blocks || store_block_states ) {
+         queue( block_state_queue, bs );
+      }
    } catch (fc::exception& e) {
       elog("FC Exception while accepted_block ${e}", ("e", e.to_string()));
    } catch (std::exception& e) {
@@ -402,11 +436,11 @@ fc::variant elasticsearch_plugin_impl::to_variant_with_abi( const T& obj ) {
    return pretty_output;
 }
 
-
 void elasticsearch_plugin_impl::process_accepted_transaction( const chain::transaction_metadata_ptr& t ) {
    try {
-      // always call since we need to capture setabi on accounts even if not storing transactions
-      _process_accepted_transaction(t);
+      if( start_block_reached ) {
+         _process_accepted_transaction( t );
+      }
    } catch (fc::exception& e) {
       elog("FC Exception while processing accepted transaction metadata: ${e}", ("e", e.to_detail_string()));
    } catch (std::exception& e) {
@@ -418,9 +452,8 @@ void elasticsearch_plugin_impl::process_accepted_transaction( const chain::trans
 
 void elasticsearch_plugin_impl::process_applied_transaction( const chain::transaction_trace_ptr& t ) {
    try {
-      if( start_block_reached ) {
-         _process_applied_transaction( t );
-      }
+      // always call since we need to capture setabi on accounts even if not storing transaction traces
+      _process_applied_transaction( t );
    } catch (fc::exception& e) {
       elog("FC Exception while processing applied transaction trace: ${e}", ("e", e.to_detail_string()));
    } catch (std::exception& e) {
@@ -433,7 +466,7 @@ void elasticsearch_plugin_impl::process_applied_transaction( const chain::transa
 void elasticsearch_plugin_impl::process_irreversible_block(const chain::block_state_ptr& bs) {
   try {
      if( start_block_reached ) {
-         _process_irreversible_block( bs );
+        _process_irreversible_block( bs );
      }
   } catch (fc::exception& e) {
      elog("FC Exception while processing irreversible block: ${e}", ("e", e.to_detail_string()));
@@ -446,13 +479,8 @@ void elasticsearch_plugin_impl::process_irreversible_block(const chain::block_st
 
 void elasticsearch_plugin_impl::process_accepted_block( const chain::block_state_ptr& bs ) {
    try {
-      if( !start_block_reached ) {
-         if( bs->block_num >= start_block_num ) {
-            start_block_reached = true;
-         }
-      }
       if( start_block_reached ) {
-         _process_accepted_block( bs ); 
+         _process_accepted_block( bs );
       }
    } catch (fc::exception& e) {
       elog("FC Exception while processing accepted block trace ${e}", ("e", e.to_string()));
