@@ -41,7 +41,7 @@ add_subdirectory(elasticsearch_plugin) # add this line.
 ...
 ```
 
-3. Add following line to `programs/nodeos/CMakeList.txt`.
+3. Add following line to `programs/nodeos/CMakeLists.txt`.
 
 ```cmake
 target_link_libraries(
