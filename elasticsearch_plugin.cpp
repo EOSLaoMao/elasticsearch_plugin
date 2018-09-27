@@ -543,7 +543,7 @@ void elasticsearch_plugin_impl::create_new_account( const chain::newaccount& new
    try {
       elastic_client->index( accounts_index, json, id );
    } catch( ... ) {
-      handle_elasticsearch_exception( "create_new_account" + json, __LINE__ );
+      handle_elasticsearch_exception( id + " create_new_account " + json, __LINE__ );
    }
 }
 
@@ -597,7 +597,7 @@ void elasticsearch_plugin_impl::update_account_auth( const chain::updateauth& up
    try {
       elastic_client->update( accounts_index, id, json );
    } catch( ... ) {
-      handle_elasticsearch_exception( "update_account_auth" + json, __LINE__ );
+      handle_elasticsearch_exception( id + " update_account_auth " + json, __LINE__ );
    }
 }
 
@@ -630,7 +630,7 @@ void elasticsearch_plugin_impl::delete_account_auth( const chain::deleteauth& de
    try {
       elastic_client->update( accounts_index, id, json);
    } catch( ... ) {
-      handle_elasticsearch_exception( "delete_account_auth" + json, __LINE__ );
+      handle_elasticsearch_exception( id + " delete_account_auth " + json, __LINE__ );
    }
 }
 
@@ -654,7 +654,7 @@ void elasticsearch_plugin_impl::upsert_account_setabi( const chain::setabi& seta
    try {
       elastic_client->update( accounts_index, id, json );
    } catch( ... ) {
-      handle_elasticsearch_exception( "upsert_account_setabi" + json, __LINE__ );
+      handle_elasticsearch_exception( id + " upsert_account_setabi " + json, __LINE__ );
    }
 }
 
@@ -758,7 +758,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    try {
       elastic_client->create( blocks_index, json, block_id_str );
    } catch( ... ) {
-      handle_elasticsearch_exception( "blocks index:" + json, __LINE__ );
+      handle_elasticsearch_exception( "blocks index " + block_id_str, __LINE__ );
    }
 }
 
@@ -793,7 +793,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       try {
          elastic_client->update( blocks_index, block_id_str, json );
       } catch( ... ) {
-         handle_elasticsearch_exception( "update block", __LINE__ );
+         handle_elasticsearch_exception( "update block " + block_id_str, __LINE__ );
       }
    }
 
@@ -871,7 +871,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    try {
       elastic_client->create(trans_index, json, trx_id_str);
    } catch( ... ) {
-      handle_elasticsearch_exception( "trans index:" + json, __LINE__ );
+      handle_elasticsearch_exception( "trans index:" + trx_id_str, __LINE__ );
    }
 }
 
