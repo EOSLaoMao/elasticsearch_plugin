@@ -44,10 +44,13 @@ add_subdirectory(elasticsearch_plugin) # add this line.
 3. Add following line to `programs/nodeos/CMakeLists.txt`.
 
 ```cmake
-target_link_libraries(
+target_link_libraries( ${NODE_EXECUTABLE_NAME}
+        PRIVATE appbase
+        PRIVATE -Wl,${whole_archive_flag} login_plugin               -Wl,${no_whole_archive_flag}
+        PRIVATE -Wl,${whole_archive_flag} history_plugin             -Wl,${no_whole_archive_flag}
         ...
         # add this line.
-        PRIVATE -Wl,${whole_archive_flag} elasticsearch_plugin -Wl,${no_whole_archive_flag}
+        PRIVATE -Wl,${whole_archive_flag} elasticsearch_plugin       -Wl,${no_whole_archive_flag}
         ...
 ```
 
