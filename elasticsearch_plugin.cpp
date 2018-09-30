@@ -502,10 +502,10 @@ void handle_elasticsearch_exception( const std::string& desc, int line_num ) {
                ("desc", desc)( "line", line_num )( "what", e.what() ));
       } catch( chain::response_code_exception& e) {
          elog( "elasticsearch exception, ${desc}, line ${line}, ${what}",
-               ("desc", desc)( "line", line_num )( "what", e.what() ));
+               ("desc", desc)( "line", line_num )( "what", e.to_detail_string() ));
       } catch( chain::bulk_fail_exception& e) {
          elog( "elasticsearch exception, ${desc}, line ${line}, ${what}",
-               ("desc", desc)( "line", line_num )( "what", e.what() ));
+               ("desc", desc)( "line", line_num )( "what", e.to_detail_string() ));
        } catch( fc::exception& er ) {
          elog( "elasticsearch fc exception, ${desc}, line ${line}, ${details}",
                ("desc", desc)( "line", line_num )( "details", er.to_detail_string()));
@@ -786,7 +786,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    try {
       elastic_client->create( blocks_index, json, block_id_str );
    } catch( ... ) {
-      handle_elasticsearch_exception( "blocks index " + block_id_str, __LINE__ );
+      handle_elasticsearch_exception( block_id_str + "blocks index " + json, __LINE__ );
    }
 }
 
@@ -804,7 +804,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       try {
          exist = elastic_client->doc_exist( blocks_index, block_id_str );
       } catch( ... ) {
-         handle_elasticsearch_exception( "check block exist", __LINE__ );
+         handle_elasticsearch_exception( "check block exist " + block_id_str, __LINE__ );
       }
 
       if ( !exist )
@@ -821,7 +821,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       try {
          elastic_client->update( blocks_index, block_id_str, json );
       } catch( ... ) {
-         handle_elasticsearch_exception( "update block " + block_id_str, __LINE__ );
+         handle_elasticsearch_exception( block_id_str + "update block " + json, __LINE__ );
       }
    }
 
@@ -860,7 +860,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       try {
          elastic_client->bulk_perform(bulk_trans);
       } catch( ... ) {
-         handle_elasticsearch_exception( "bulk transaction update", __LINE__ );
+         handle_elasticsearch_exception( "bulk transaction update " + bulk_trans.body(), __LINE__ );
       }
    }
 }
@@ -899,7 +899,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    try {
       elastic_client->create(trans_index, json, trx_id_str);
    } catch( ... ) {
-      handle_elasticsearch_exception( "trans index:" + trx_id_str, __LINE__ );
+      handle_elasticsearch_exception( trx_id_str + " trans index " + json, __LINE__ );
    }
 }
 
@@ -938,7 +938,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
       try {
          elastic_client->bulk_perform(bulk_action_traces);
       } catch( ... ) {
-         handle_elasticsearch_exception( "action traces", __LINE__ );
+         handle_elasticsearch_exception( "action traces " + bulk_action_traces.body(), __LINE__ );
       }
    }
 
