@@ -1,5 +1,7 @@
 # elasticsearch_plugin
-Nodeos plugin for archiving blockchain data into Elasticsearch, inspired by [mongo_db_plugin](https://github.com/EOSIO/eos/tree/master/plugins/mongo_db_plugin). Work with [official eosio repository](https://github.com/EOSIO/eos).
+Nodeos plugin for archiving blockchain data into Elasticsearch, inspired by [mongo_db_plugin](https://github.com/EOSIO/eos/tree/master/plugins/mongo_db_plugin).
+
+**Currently the plugin only work with [official eosio repository](https://github.com/EOSIO/eos).**
 
 [Benchmark](benchmark.md)
 
