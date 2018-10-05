@@ -24,7 +24,7 @@ bool is_2xx(int32_t status_code)
 bool elasticsearch_client::head(const std::string &url_path)
 {
    cpr::Response resp = client.performRequest(elasticlient::Client::HTTPMethod::HEAD, url_path, "");
-   if ( is_2xx(resp.status_code) ) {
+   if ( resp.status_code == 200 ) {
       return true;
    } else if ( resp.status_code == 404 ) {
       return false;
@@ -49,6 +49,8 @@ uint32_t elasticsearch_client::create(const std::string &index_name, const std::
 {
    auto url = boost::str(boost::format("%1%/_doc/%2%/_create") % index_name % id );
    cpr::Response resp = client.performRequest(elasticlient::Client::HTTPMethod::PUT, url, body);
+   if ( (!is_2xx(resp.status_code)) && (resp.status_code != 409) )
+      EOS_THROW(chain::response_code_exception, "${code} ${text}", ("code", resp.status_code)("text", resp.text));
    return resp.status_code;
 }
 
@@ -83,7 +85,6 @@ bool elasticsearch_client::get(const std::string &index_name, const std::string 
    res = fc::json::from_string(resp.text);
    return true;
 }
-
 
 void elasticsearch_client::search(const std::string &index_name, fc::variant &v, const std::string &query)
 {

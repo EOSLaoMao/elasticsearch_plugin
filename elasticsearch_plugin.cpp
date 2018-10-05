@@ -25,6 +25,8 @@
 
 #include <queue>
 #include <stack>
+#include <utility>
+#include <unordered_map>
 
 #include "elasticsearch_client.hpp"
 #include "exceptions.hpp"
@@ -87,14 +89,13 @@ public:
    bool get_abi_by_account(fc::variant &v, const account_name &name);
    void purge_abi_cache();
 
-   bool add_action_trace( elasticlient::SameIndexBulkData& bulk_action_traces, const chain::action_trace& atrace,
-                          bool executed, const std::chrono::milliseconds& now );
-
-   void upsert_account(const chain::action& act);
-   void create_new_account( const chain::newaccount& newacc, std::chrono::milliseconds& now );
-   void update_account_auth( const chain::updateauth& update, std::chrono::milliseconds& now );
-   void delete_account_auth( const chain::deleteauth& del, std::chrono::milliseconds& now );
-   void upsert_account_setabi( const chain::setabi& setabi, std::chrono::milliseconds& now );
+   void upsert_account(
+         std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
+         const chain::action& act );
+   void create_new_account( fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now );
+   void update_account_auth( fc::mutable_variant_object& param_doc, const chain::updateauth& update, std::chrono::milliseconds& now );
+   void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
+   void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
 
    /// @return true if act should be added to elasticsearch, false to skip it
    bool filter_include( const chain::action& act ) const;
@@ -525,14 +526,14 @@ void handle_elasticsearch_exception( const std::string& desc, int line_num ) {
    }
 }
 
-void elasticsearch_plugin_impl::create_new_account( const chain::newaccount& newacc, std::chrono::milliseconds& now )
+void elasticsearch_plugin_impl::create_new_account(
+   fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now )
 {
-   fc::mutable_variant_object account_doc;
    fc::variants pub_keys;
    fc::variants account_controls;
 
-   account_doc["name"] = newacc.name.to_string();
-   account_doc["createAt"] = now.count();
+   param_doc("name", newacc.name.to_string());
+   param_doc("createAt", now.count());
 
    for( const auto& account : newacc.owner.accounts ) {
       fc::mutable_variant_object account_entry;
@@ -562,38 +563,13 @@ void elasticsearch_plugin_impl::create_new_account( const chain::newaccount& new
       pub_keys.emplace_back(key_entry);
    }
 
-   account_doc["pub_keys"] = pub_keys;
-   account_doc["account_controls"] = account_controls;
-
-   auto id = std::to_string(newacc.name.value);
-   auto json = fc::json::to_string( account_doc );
-
-   try {
-      elastic_client->index( accounts_index, json, id );
-   } catch( ... ) {
-      handle_elasticsearch_exception( id + " create_new_account " + json, __LINE__ );
-   }
+   param_doc("pub_keys", pub_keys);
+   param_doc("account_controls", account_controls);
 }
 
-void elasticsearch_plugin_impl::update_account_auth( const chain::updateauth& update, std::chrono::milliseconds& now )
+void elasticsearch_plugin_impl::update_account_auth(
+   fc::mutable_variant_object& param_doc, const chain::updateauth& update, std::chrono::milliseconds& now )
 {
-   std::string script = R"###(
-   {
-      "lang": "painless",
-      "source": "
-         ctx._source.pub_keys.removeIf(item -> item.permission == params.permission);
-         ctx._source.account_controls.removeIf(item -> item.permission == params.permission);
-         ctx._source.pub_keys.addAll(params.pub_keys);
-         ctx._source.account_controls.addAll(params.account_controls);
-         ctx._source.updateAt = params.updateAt;"
-   }
-   )###";
-
-   // to erase breakline in the `source` text.
-   script.erase(std::remove(script.begin(), script.end(), '\n'), script.end());
-
-   fc::mutable_variant_object script_doc( fc::json::from_string(script) );
-   fc::mutable_variant_object params_doc;
    fc::variants pub_keys;
    fc::variants account_controls;
 
@@ -611,135 +587,109 @@ void elasticsearch_plugin_impl::update_account_auth( const chain::updateauth& up
       account_controls.emplace_back(account_entry);
    }
 
-   params_doc["permission"] = update.permission.to_string();
-   params_doc["pub_keys"] = pub_keys;
-   params_doc["account_controls"] = account_controls;
-   params_doc["updateAt"] = now.count();
-
-   script_doc["params"] = params_doc;
-
-   auto id = std::to_string(update.account.value);
-   auto json = fc::json::to_string( fc::variant_object( "script", script_doc) );
-
-
-   try {
-      elastic_client->update( accounts_index, id, json );
-   } catch( ... ) {
-      handle_elasticsearch_exception( id + " update_account_auth " + json, __LINE__ );
-   }
+   param_doc("permission", update.permission.to_string());
+   param_doc("pub_keys", pub_keys);
+   param_doc("account_controls", account_controls);
+   param_doc("updateAt", now.count());
 }
 
-void elasticsearch_plugin_impl::delete_account_auth( const chain::deleteauth& del, std::chrono::milliseconds& now )
+void elasticsearch_plugin_impl::delete_account_auth(
+   fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now )
 {
-   std::string script = R"###(
-   {
-      "lang": "painless",
-      "source": "
-         ctx._source.pub_keys.removeIf(item -> item.permission == params.permission);
-         ctx._source.account_controls.removeIf(item -> item.permission == params.permission);
-         ctx._source.updateAt = params.updateAt;"
-   }
-   )###";
-
-   // to erase breakline in the `source` text.
-   script.erase(std::remove(script.begin(), script.end(), '\n'), script.end());
-
-   fc::mutable_variant_object script_doc( fc::json::from_string(script) );
-   fc::mutable_variant_object params_doc;
-
-   params_doc["permission"] = del.permission.to_string();
-   params_doc["updateAt"] = now.count();
-
-   script_doc["params"] = params_doc;
-
-   auto id = std::to_string(del.account.value);
-   auto json = fc::json::to_string( fc::variant_object( "script", script_doc) );
-
-   try {
-      elastic_client->update( accounts_index, id, json);
-   } catch( ... ) {
-      handle_elasticsearch_exception( id + " delete_account_auth " + json, __LINE__ );
-   }
+   param_doc("permission", del.permission.to_string());
+   param_doc("updateAt", now.count());
 }
 
-void elasticsearch_plugin_impl::upsert_account_setabi( const chain::setabi& setabi, std::chrono::milliseconds& now )
+void elasticsearch_plugin_impl::upsert_account_setabi(
+   fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now )
 {
-   fc::mutable_variant_object doc;
-   fc::mutable_variant_object upsert_doc;
-
    abi_def abi_def = fc::raw::unpack<chain::abi_def>( setabi.abi );
 
-   upsert_doc["name"] = setabi.account.to_string();
-   upsert_doc["abi"] = abi_def;
-   upsert_doc["updateAt"] = now.count();
-
-   doc["doc"] = upsert_doc;
-   doc["doc_as_upsert"] = true;
-
-   auto id = std::to_string(setabi.account.value);
-   auto json = fc::json::to_string( doc );
-
-   try {
-      elastic_client->update( accounts_index, id, json );
-   } catch( ... ) {
-      handle_elasticsearch_exception( id + " upsert_account_setabi " + json, __LINE__ );
-   }
+   param_doc("name", setabi.account.to_string());
+   param_doc("abi", abi_def);
+   param_doc("updateAt", now.count());
 }
 
-void elasticsearch_plugin_impl::upsert_account(const chain::action& act)
+void elasticsearch_plugin_impl::upsert_account(
+      std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
+      const chain::action& act )
 {
    if (act.account != chain::config::system_account_name)
       return;
 
-
    std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
+
+   uint64_t account_id;
+   std::string upsert_script;
+   fc::mutable_variant_object param_doc;
+
    try {
       if( act.name == newaccount ) {
          auto newacc = act.data_as<chain::newaccount>();
-         create_new_account( newacc, now );
+
+         create_new_account(param_doc, newacc, now);
+         account_id = newacc.name.value;
+         upsert_script =
+            "ctx._source.name = params[\"%1%\"].name;"
+            "ctx._source.pub_keys = params[\"%1%\"].pub_keys;"
+            "ctx._source.account_controls = params[\"%1%\"].account_controls;"
+            "ctx._source.createAt = params[\"%1%\"].createAt;";
 
       } else if( act.name == updateauth ) {
          const auto update = act.data_as<chain::updateauth>();
-         update_account_auth( update, now );
+
+         update_account_auth(param_doc, update, now);
+         account_id = update.account.value;
+         upsert_script =
+            "ctx._source.pub_keys.removeIf(item -> item.permission == params[\"%1%\"].permission);"
+            "ctx._source.account_controls.removeIf(item -> item.permission == params[\"%1%\"].permission);"
+            "ctx._source.pub_keys.addAll(params[\"%1%\"].pub_keys);"
+            "ctx._source.account_controls.addAll(params[\"%1%\"].account_controls);"
+            "ctx._source.updateAt = params[\"%1%\"].updateAt;";
 
       } else if( act.name == deleteauth ) {
          const auto del = act.data_as<chain::deleteauth>();
-         delete_account_auth( del, now );
+
+         delete_account_auth(param_doc, del, now);
+         account_id = del.account.value;
+         upsert_script =
+            "ctx._source.pub_keys.removeIf(item -> item.permission == params[\"%1%\"].permission);"
+            "ctx._source.account_controls.removeIf(item -> item.permission == params[\"%1%\"].permission);"
+            "ctx._source.updateAt = params[\"%1%\"].updateAt;";
 
       } else if( act.name == setabi ) {
          auto setabi = act.data_as<chain::setabi>();
 
          abi_cache_index.erase( setabi.account );
 
-         upsert_account_setabi( setabi, now );
+         upsert_account_setabi(param_doc, setabi, now);
+         account_id = setabi.account.value;
+         upsert_script =
+            "ctx._source.name = params[\"%1%\"].name;"
+            "ctx._source.abi = params[\"%1%\"].abi;"
+            "ctx._source.updateAt = params[\"%1%\"].updateAt;";
       }
+
+      if ( !upsert_script.empty() ) {
+         auto it = account_upsert_actions.find(account_id);
+         if ( it != account_upsert_actions.end() ) {
+            auto idx = std::to_string(it->second.second.size());
+            auto script = boost::str(boost::format(upsert_script) % idx);
+            it->second.first.append(script);
+            it->second.second.operator()(idx, param_doc);
+         } else {
+            auto idx = "0";
+            auto script = boost::str(boost::format(upsert_script) % idx);
+            account_upsert_actions.emplace(
+               account_id,
+               std::pair<std::string, fc::mutable_variant_object>(script, fc::mutable_variant_object(idx, param_doc)));
+         }
+      }
+
    } catch( fc::exception& e ) {
       // if unable to unpack native type, skip account creation
    }
-}
-
-bool elasticsearch_plugin_impl::add_action_trace( elasticlient::SameIndexBulkData& bulk_action_traces, const chain::action_trace& atrace,
-                                        bool executed, const std::chrono::milliseconds& now )
-{
-   if( executed && atrace.receipt.receiver == chain::config::system_account_name ) {
-      upsert_account( atrace.act );
-   }
-
-   bool added = false;
-   if( start_block_reached && store_action_traces && filter_include( atrace.act ) ) {
-      fc::mutable_variant_object action_traces_doc;
-      const chain::base_action_trace& base = atrace; // without inline action traces
-
-      fc::from_variant( to_variant_with_abi( base ), action_traces_doc );
-      action_traces_doc["createdAt"] = now.count();
-
-      auto json = fc::json::to_string(action_traces_doc);
-      bulk_action_traces.indexDocument("_doc", "", json);
-      added = true;
-   }
-
-   return added;
 }
 
 void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_state_ptr& bs ) {
@@ -756,30 +706,30 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
    fc::mutable_variant_object block_state_doc;
-   block_state_doc["block_num"] = static_cast<int32_t>(block_num);
-   block_state_doc["block_id"] = block_id_str;
-   block_state_doc["validated"] = bs->validated;
-   block_state_doc["in_current_chain"] = bs->in_current_chain;
-   block_state_doc["block_header_state"] = bs;
-   block_state_doc["createAt"] = now.count();
+   block_state_doc("block_num", static_cast<int32_t>(block_num));
+   block_state_doc("block_id", block_id_str);
+   block_state_doc("validated", bs->validated);
+   block_state_doc("in_current_chain", bs->in_current_chain);
+   block_state_doc("block_header_state", bs);
+   block_state_doc("createAt", now.count());
 
    auto block_states_json = fc::json::to_string( block_state_doc );
 
    try {
-      elastic_client->index( block_states_index, block_states_json );
+      elastic_client->create( block_states_index, block_states_json, block_id_str );
    } catch( ... ) {
-      handle_elasticsearch_exception( "block_states index:" + block_states_json, __LINE__ );
+      handle_elasticsearch_exception( block_id_str + "block_states create:" + block_states_json, __LINE__ );
    }
 
    if( !store_blocks ) return;
 
    fc::mutable_variant_object block_doc;
 
-   block_doc["block_num"] = static_cast<int32_t>(block_num);
-   block_doc["block_id"] = block_id_str;
-   block_doc["block"] = to_variant_with_abi( *bs->block );
-   block_doc["irreversible"] = false;
-   block_doc["createAt"] = now.count();
+   block_doc("block_num", static_cast<int32_t>(block_num));
+   block_doc("block_id", block_id_str);
+   block_doc("block", to_variant_with_abi( *bs->block ));
+   block_doc("irreversible", false);
+   block_doc("createAt", now.count());
 
    auto json = fc::json::to_string( block_doc );
 
@@ -811,10 +761,10 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
          _process_accepted_block( bs );
 
       fc::mutable_variant_object doc;
-      doc["irreversible"] = true;
-      doc["validated"] = bs->validated;
-      doc["in_current_chain"] = bs->in_current_chain;
-      doc["updatedAt"] = now.count();
+      doc("irreversible", true);
+      doc("validated", bs->validated);
+      doc("in_current_chain", bs->in_current_chain);
+      doc("updatedAt", now.count());
 
       auto json = fc::json::to_string( fc::variant_object("doc", doc) );
 
@@ -845,10 +795,10 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       }
 
       fc::mutable_variant_object doc;
-      doc["irreversible"] = true;
-      doc["block_id"] = block_id_str;
-      doc["block_num"] = static_cast<int32_t>(block_num);
-      doc["updatedAt"] = now.count();
+      doc("irreversible", true);
+      doc("block_id", block_id_str);
+      doc("block_num", static_cast<int32_t>(block_num));
+      doc("updatedAt", now.count());
 
       auto json = fc::json::to_string( fc::variant_object("doc", doc) );
 
@@ -856,7 +806,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       transactions_in_block = true;
    }
 
-   if( transactions_in_block ) {
+   if( transactions_in_block && !bulk_trans.empty() ) {
       try {
          elastic_client->bulk_perform(bulk_trans);
       } catch( ... ) {
@@ -876,7 +826,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    const auto& trx = t->trx;
 
    fc::from_variant( to_variant_with_abi( trx ), trans_doc );
-   trans_doc["trx_id"] = trx_id_str;
+   trans_doc("trx_id", trx_id_str);
 
    fc::variant signing_keys;
    if( t->signing_keys.valid() ) {
@@ -886,13 +836,13 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    }
 
    if( !signing_keys.is_null() ) {
-      trans_doc["signing_keys"] = signing_keys;
+      trans_doc("signing_keys", signing_keys);
    }
 
-   trans_doc["accepted"] = t->accepted;
-   trans_doc["implicit"] = t->implicit;
-   trans_doc["scheduled"] = t->scheduled;
-   trans_doc["createdAt"] = now.count();
+   trans_doc("accepted", t->accepted);
+   trans_doc("implicit", t->implicit);
+   trans_doc("scheduled", t->scheduled);
+   trans_doc("createdAt", now.count());
 
    auto json = fc::json::to_string( trans_doc );
 
@@ -908,33 +858,76 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
    elasticlient::SameIndexBulkData bulk_action_traces(action_traces_index);
+   elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
+
+   std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;
+   std::vector<std::reference_wrapper<chain::base_action_trace>> base_action_traces; // without inline action traces
+
 
    fc::mutable_variant_object trans_traces_doc;
-   bool write_atraces = false;
    bool executed = t->receipt.valid() && t->receipt->status == chain::transaction_receipt_header::executed;
 
    std::stack<std::reference_wrapper<chain::action_trace>> stack;
    for( auto& atrace : t->action_traces ) {
-      try {
-         stack.emplace(atrace);
+      stack.emplace(atrace);
 
-         while ( !stack.empty() )
-         {
-            auto &atrace = stack.top();
-            stack.pop();
-            write_atraces |= add_action_trace( bulk_action_traces, atrace, executed, now );
-            auto &inline_traces = atrace.get().inline_traces;
-            for( auto it = inline_traces.rbegin(); it != inline_traces.rend(); ++it ) {
-               stack.emplace(*it);
-            }
+      while ( !stack.empty() )
+      {
+         auto &atrace = stack.top().get();
+         stack.pop();
+
+         if( executed && atrace.receipt.receiver == chain::config::system_account_name ) {
+               upsert_account( account_upsert_actions, atrace.act );
          }
 
-      } catch(...) {
-         handle_elasticsearch_exception("add action traces", __LINE__);
+         if( start_block_reached && store_action_traces && filter_include( atrace.act ) ) {
+               base_action_traces.emplace_back(atrace);
+         }
+
+         auto &inline_traces = atrace.inline_traces;
+         for( auto it = inline_traces.rbegin(); it != inline_traces.rend(); ++it ) {
+            stack.emplace(*it);
+         }
       }
    }
 
-   if( write_atraces ) {
+   for( auto& action : account_upsert_actions ) {
+
+      fc::mutable_variant_object source_doc;
+      fc::mutable_variant_object script_doc;
+
+      script_doc("lang", "painless");
+      script_doc("source", action.second.first);
+      script_doc("params", action.second.second);
+
+      source_doc("scripted_upsert", true);
+      source_doc("upsert", fc::variant_object());
+      source_doc("script", script_doc);
+
+      auto id = std::to_string(action.first);
+      auto json = fc::json::to_string(source_doc);
+
+      bulk_account_upserts.updateDocument("_doc", id, json);
+   }
+
+   if ( !bulk_account_upserts.empty() ) {
+      try {
+         elastic_client->bulk_perform(bulk_account_upserts);
+      } catch( ... ) {
+         handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
+      }
+   }
+
+   for ( auto& atrace : base_action_traces) {
+      fc::mutable_variant_object action_traces_doc;
+      chain::base_action_trace &base = atrace.get();
+      fc::from_variant( to_variant_with_abi( base ), action_traces_doc );
+      action_traces_doc("createdAt", now.count());
+      auto json = fc::json::to_string(action_traces_doc);
+      bulk_action_traces.indexDocument("_doc", "", json);
+   }
+
+   if ( !bulk_action_traces.empty() ) {
       try {
          elastic_client->bulk_perform(bulk_action_traces);
       } catch( ... ) {
@@ -942,12 +935,12 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
       }
    }
 
+   if( !bulk_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
    if( !start_block_reached || !store_transaction_traces ) return;
-   if( !write_atraces ) return; //< do not index transaction_trace if all action_traces filtered out
 
    // transaction trace index
    fc::from_variant( to_variant_with_abi( *t ), trans_traces_doc );
-   trans_traces_doc["createAt"] = now.count();
+   trans_traces_doc("createAt", now.count());
 
    std::string json = fc::json::to_string( trans_traces_doc );
    try {
@@ -1090,9 +1083,17 @@ void elasticsearch_plugin_impl::init() {
    if (elastic_client->count_doc(accounts_index) == 0) {
       auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
-      struct chain::newaccount newacc = {};
-      newacc.name = chain::config::system_account_name;
-      create_new_account(newacc, now);
+      
+      fc::mutable_variant_object account_doc;
+      auto acc_name = chain::config::system_account_name;
+      account_doc("name", name( acc_name ).to_string());
+      account_doc("createAt", now.count());
+      auto json = fc::json::to_string(account_doc);
+      try {
+         elastic_client->create(accounts_index, json, std::to_string(acc_name));
+      } catch( ... ) {
+         handle_elasticsearch_exception( "create system account " + json, __LINE__ );
+      }
    }
 
    ilog("starting elasticsearch plugin thread");
@@ -1221,6 +1222,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          }
 
          std::string url_str = options.at( "elastic-url" ).as<std::string>();
+         if ( url_str.back() != '/' ) url_str.push_back('/');
          std::string user_str = options.at( "elastic-user" ).as<std::string>();
          std::string password_str = options.at( "elastic-password" ).as<std::string>();
          my->elastic_client = std::make_shared<elasticsearch_client>(std::vector<std::string>({url_str}), user_str, password_str);

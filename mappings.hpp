@@ -134,6 +134,9 @@ static const std::string action_traces_mapping = R"(
                 },
                 "act": {
                     "enabled": false
+                },
+                "account_ram_deltas": {
+                    "enabled": false
                 }
             }
         }
