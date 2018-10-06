@@ -19,8 +19,8 @@ cmake -DBUILD_ELASTICLIENT_TESTS=NO -DBUILD_ELASTICLIENT_EXAMPLE=NO
 make
 sudo make install
 # copy cpr library manually
-cp -r "external/cpr/include/cpr" "/usr/local/include/cpr"
-cp "lib/libcpr.so" "/usr/local/lib/libcpr.so"
+sudo cp -r "external/cpr/include/cpr" "/usr/local/include/cpr"
+sudo cp "lib/libcpr.so" "/usr/local/lib/libcpr.so"
 ```
 
 ### Embed `elasticsearch_plugin` into `nodeos`
