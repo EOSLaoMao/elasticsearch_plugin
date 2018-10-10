@@ -1088,6 +1088,8 @@ void elasticsearch_plugin_impl::init() {
       auto acc_name = chain::config::system_account_name;
       account_doc("name", name( acc_name ).to_string());
       account_doc("createAt", now.count());
+      account_doc("pub_keys", fc::variants());
+      account_doc("account_controls", fc::variants());
       auto json = fc::json::to_string(account_doc);
       try {
          elastic_client->create(accounts_index, json, std::to_string(acc_name));

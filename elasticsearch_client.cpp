@@ -102,8 +102,14 @@ void elasticsearch_client::delete_by_query(const std::string &index_name, const 
 
 void elasticsearch_client::bulk_perform(elasticlient::SameIndexBulkData &bulk)
 {
-   size_t errors = bulk_indexer.perform(bulk);
-   EOS_ASSERT(errors == 0, chain::bulk_fail_exception, "bulk perform error num: ${errors}", ("errors", errors));
+   auto index_name = bulk.indexName();
+   auto body = bulk.body();
+   auto url = boost::str(boost::format("%1%/_bulk") % index_name);
+   cpr::Response resp = client.performRequest(elasticlient::Client::HTTPMethod::POST, url, body);
+   EOS_ASSERT(is_2xx(resp.status_code), chain::response_code_exception, "${code} ${text}", ("code", resp.status_code)("text", resp.text));
+   
+   fc::variant text_doc( fc::json::from_string(resp.text) );
+   EOS_ASSERT(text_doc["errors"].as_bool() == false, chain::bulk_fail_exception, "bulk perform errors: ${text}", ("text", resp.text));
 }
 
 void elasticsearch_client::update(const std::string &index_name, const std::string &id, const std::string &body)
