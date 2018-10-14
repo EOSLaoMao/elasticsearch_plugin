@@ -731,7 +731,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    block_doc("irreversible", false);
    block_doc("createAt", now.count());
 
-   auto json = fc::json::to_string( block_doc );
+   auto json = fc::prune_invalid_utf8( fc::json::to_string( block_doc ) );
 
    try {
       elastic_client->create( blocks_index, json, block_id_str );
@@ -844,7 +844,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    trans_doc("scheduled", t->scheduled);
    trans_doc("createdAt", now.count());
 
-   auto json = fc::json::to_string( trans_doc );
+   auto json = fc::prune_invalid_utf8( fc::json::to_string( trans_doc ) );
 
    try {
       elastic_client->create(trans_index, json, trx_id_str);
@@ -923,7 +923,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
       chain::base_action_trace &base = atrace.get();
       fc::from_variant( to_variant_with_abi( base ), action_traces_doc );
       action_traces_doc("createdAt", now.count());
-      auto json = fc::json::to_string(action_traces_doc);
+      auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
       bulk_action_traces.indexDocument("_doc", "", json);
    }
 
@@ -935,14 +935,14 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
       }
    }
 
-   if( !bulk_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
+   if( bulk_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
    if( !start_block_reached || !store_transaction_traces ) return;
 
    // transaction trace index
    fc::from_variant( to_variant_with_abi( *t ), trans_traces_doc );
    trans_traces_doc("createAt", now.count());
 
-   std::string json = fc::json::to_string( trans_traces_doc );
+   std::string json = fc::prune_invalid_utf8( fc::json::to_string( trans_traces_doc ) );
    try {
       elastic_client->index(trans_traces_index, json);
    } catch( ... ) {
