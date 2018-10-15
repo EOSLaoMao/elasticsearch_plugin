@@ -1,9 +1,8 @@
 # elasticsearch_plugin
+
 Nodeos plugin for archiving blockchain data into Elasticsearch, inspired by [mongo_db_plugin](https://github.com/EOSIO/eos/tree/master/plugins/mongo_db_plugin).
 
 **Currently the plugin only work with [official eosio repository](https://github.com/EOSIO/eos).**
-
-[Benchmark](benchmark.md)
 
 ## Installation
 
@@ -100,3 +99,39 @@ Config Options for eosio::elasticsearch_plugin:
                                                 all from reciever:action. Receiver may 
                                                 not be blank.
 ```
+
+## Benchmark
+
+### Hardware
+
+```text
+Processor: AMD® Ryzen 5 1600 six-core processor × 12
+Memory:    2 × 8GB DDR4 2400
+```
+
+### Configuration
+
+```bash
+./build/programs/nodeos/nodeos --data-dir=dev_config/data \
+    --config-dir=dev_config \
+    --replay-blockchain \
+    --elastic-url=http://localhost:9200/ \
+    --elastic-queue-size=512 \
+    --elastic-abi-cache-size=8192 \
+    --elastic-index-wipe
+
+./build/programs/nodeos/nodeos --data-dir=dev_config/data \
+    --config-dir=dev_config \
+    --replay-blockchain \
+    --mongodb-uri=mongodb://root:example@localhost:27017/eos?authSource=admin \
+    --mongodb-queue-size=512 \
+    --mongodb-abi-cache-size=8192 \
+    --mongodb-wipe
+```
+
+### Replay 10000 Block
+
+|                      | blocks | elapse(s) | speed(b/s) |
+| -------------------- |:------:|:---------:|:----------:|
+| mongo_db_plugin      | 10000  | 694       | 14.41      |
+| elasticsearch_plugin | 10000  | 2050      | 4.88       |

@@ -11,7 +11,7 @@ class elasticsearch_client
 {
 public:
    elasticsearch_client(const std::vector<std::string> url_list, const std::string &user, const std::string &password)
-      :client(url_list, user, password), bulk_indexer(url_list, user, password){};
+      :client(url_list, user, password, 60000), bulk_indexer(url_list, user, password){};
 
    void delete_index(const std::string &index_name);
    void init_index(const std::string &index_name, const std::string &mappings);
