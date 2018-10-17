@@ -764,7 +764,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       doc("irreversible", true);
       doc("validated", bs->validated);
       doc("in_current_chain", bs->in_current_chain);
-      doc("updatedAt", now.count());
+      doc("updateAt", now.count());
 
       auto json = fc::json::to_string( fc::variant_object("doc", doc) );
 
@@ -800,7 +800,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       trans_doc("irreversible", true);
       trans_doc("block_id", block_id_str);
       trans_doc("block_num", static_cast<int32_t>(block_num));
-      trans_doc("updatedAt", now.count());
+      trans_doc("updateAt", now.count());
 
       doc("doc", trans_doc);
       doc("doc_as_upsert", true);
