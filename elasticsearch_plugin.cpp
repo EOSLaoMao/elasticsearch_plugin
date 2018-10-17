@@ -794,13 +794,19 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
          trx_id_str = id.str();
       }
 
+      fc::mutable_variant_object trans_doc;
       fc::mutable_variant_object doc;
-      doc("irreversible", true);
-      doc("block_id", block_id_str);
-      doc("block_num", static_cast<int32_t>(block_num));
-      doc("updatedAt", now.count());
 
-      auto json = fc::json::to_string( fc::variant_object("doc", doc) );
+      trans_doc("irreversible", true);
+      trans_doc("block_id", block_id_str);
+      trans_doc("block_num", static_cast<int32_t>(block_num));
+      trans_doc("updatedAt", now.count());
+
+      doc("doc", trans_doc);
+      doc("doc_as_upsert", true);
+      doc("retry_on_conflict", 2);
+
+      auto json = fc::json::to_string( doc );
 
       bulk_trans.updateDocument("_doc", trx_id_str, json);
       transactions_in_block = true;
@@ -810,13 +816,14 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       try {
          elastic_client->bulk_perform(bulk_trans);
       } catch( ... ) {
-         handle_elasticsearch_exception( "bulk transaction update " + bulk_trans.body(), __LINE__ );
+         handle_elasticsearch_exception( "bulk transaction upsert " + bulk_trans.body(), __LINE__ );
       }
    }
 }
 
 void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::transaction_metadata_ptr& t ) {
    fc::mutable_variant_object trans_doc;
+   fc::mutable_variant_object doc;
 
    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
@@ -844,12 +851,16 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    trans_doc("scheduled", t->scheduled);
    trans_doc("createdAt", now.count());
 
-   auto json = fc::prune_invalid_utf8( fc::json::to_string( trans_doc ) );
+   doc("doc", trans_doc);
+   doc("doc_as_upsert", true);
+   doc("retry_on_conflict", 2);
+
+   auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
    try {
-      elastic_client->create(trans_index, json, trx_id_str);
+      elastic_client->update(trans_index, trx_id_str, json);
    } catch( ... ) {
-      handle_elasticsearch_exception( trx_id_str + " trans index " + json, __LINE__ );
+      handle_elasticsearch_exception( trx_id_str + " trans upsert " + json, __LINE__ );
    }
 }
 
