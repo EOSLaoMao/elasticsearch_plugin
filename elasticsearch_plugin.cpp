@@ -576,7 +576,6 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
 
    const auto block_id = bs->id;
    const auto block_id_str = block_id.str();
-   const auto prev_block_id_str = bs->block->previous.str();
 
    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
@@ -585,7 +584,6 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    block_state_doc("block_num", static_cast<int32_t>(block_num));
    block_state_doc("block_id", block_id_str);
    block_state_doc("validated", bs->validated);
-   block_state_doc("in_current_chain", bs->in_current_chain);
    block_state_doc("block_header_state", bs);
    block_state_doc("createAt", now.count());
 
@@ -625,29 +623,67 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
-   if( store_blocks ) {
-      bool exist = false;
-      try {
-         exist = elastic_client->doc_exist( blocks_index, block_id_str );
-      } catch( ... ) {
-         handle_elasticsearch_exception( "check block exist " + block_id_str, __LINE__ );
-      }
+   auto source =
+      "ctx._source.validated = params.validated;"
+      "ctx._source.irreversible = params.irreversible;"
+      "ctx._source.updateAt = params.updateAt;";
 
-      if ( !exist )
-         _process_accepted_block( bs );
+   fc::mutable_variant_object params_doc;
+   fc::mutable_variant_object script_doc;
 
+   params_doc("validated", bs->validated);
+   params_doc("irreversible", true);
+   params_doc("updateAt", now.count());
+
+   script_doc("source", source);
+   script_doc("lang", "painless");
+   script_doc("params", params_doc);
+
+   if( store_block_states ) {
       fc::mutable_variant_object doc;
-      doc("irreversible", true);
-      doc("validated", bs->validated);
-      doc("in_current_chain", bs->in_current_chain);
-      doc("updateAt", now.count());
+      fc::mutable_variant_object block_state_doc;
 
-      auto json = fc::json::to_string( fc::variant_object("doc", doc) );
+      block_state_doc("block_num", static_cast<int32_t>(block_num));
+      block_state_doc("block_id", block_id_str);
+      block_state_doc("block_header_state", bs);
+      block_state_doc("validated", bs->validated);
+      block_state_doc("irreversible", true);
+      block_state_doc("createAt", now.count());
+
+      doc("script", script_doc);
+      doc("upsert", block_state_doc);
+      doc("retry_on_conflict", 100);
+
+      auto json = fc::json::to_string( doc );
+
+      try {
+         elastic_client->update( block_states_index, block_id_str, json );
+      } catch( ... ) {
+         handle_elasticsearch_exception( block_id_str + " block_states upsert:" + json, __LINE__ );
+      }
+   }
+
+   if( store_blocks ) {
+      fc::mutable_variant_object doc;
+      fc::mutable_variant_object block_doc;
+
+      block_doc("block_num", static_cast<int32_t>(block_num));
+      block_doc("block_id", block_id_str);
+      block_doc("block", abi_deserializer->to_variant_with_abi( *bs->block ));
+      block_doc("irreversible", true);
+      block_doc("validated", bs->validated);
+      block_doc("createAt", now.count());
+
+      doc("script", script_doc);
+      doc("upsert", block_doc);
+      doc("retry_on_conflict", 100);
+
+      auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
       try {
          elastic_client->update( blocks_index, block_id_str, json );
       } catch( ... ) {
-         handle_elasticsearch_exception( block_id_str + "update block " + json, __LINE__ );
+         handle_elasticsearch_exception( block_id_str + " blocks upsert: " + json, __LINE__ );
       }
    }
 
@@ -680,7 +716,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
 
       doc("doc", trans_doc);
       doc("doc_as_upsert", true);
-      doc("retry_on_conflict", 2);
+      doc("retry_on_conflict", 100);
 
       auto json = fc::json::to_string( doc );
 
@@ -729,7 +765,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
 
    doc("doc", trans_doc);
    doc("doc_as_upsert", true);
-   doc("retry_on_conflict", 2);
+   doc("retry_on_conflict", 100);
 
    auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
