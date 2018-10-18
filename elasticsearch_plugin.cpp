@@ -1,7 +1,3 @@
-/**
- *  @file
- *  @copyright defined in eos/LICENSE.txt
- */
 #include <eosio/elasticsearch_plugin/elasticsearch_plugin.hpp>
 #include <eosio/chain/eosio_contract.hpp>
 #include <eosio/chain/config.hpp>
@@ -31,6 +27,7 @@
 #include "elasticsearch_client.hpp"
 #include "exceptions.hpp"
 #include "mappings.hpp"
+#include "deserializer.hpp"
 
 
 namespace eosio {
@@ -84,11 +81,6 @@ public:
    void process_irreversible_block(const chain::block_state_ptr&);
    void _process_irreversible_block(const chain::block_state_ptr&);
 
-   optional<abi_serializer> get_abi_serializer( account_name n );
-   template<typename T> fc::variant to_variant_with_abi( const T& obj );
-   bool get_abi_by_account(fc::variant &v, const account_name &name);
-   void purge_abi_cache();
-
    void upsert_account(
          std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
          const chain::action& act );
@@ -120,6 +112,7 @@ public:
    bool store_action_traces = true;
 
    std::shared_ptr<elasticsearch_client> elastic_client;
+   std::shared_ptr<deserializer> abi_deserializer;
 
    size_t max_queue_size = 0;
    int queue_sleep_time = 0;
@@ -139,24 +132,6 @@ public:
    boost::atomic<bool> startup{true};
    fc::optional<chain::chain_id_type> chain_id;
    fc::microseconds abi_serializer_max_time;
-
-   struct by_account;
-   struct by_last_access;
-
-   struct abi_cache {
-      account_name                     account;
-      fc::time_point                   last_accessed;
-      fc::optional<abi_serializer>     serializer;
-   };
-
-   typedef boost::multi_index_container<abi_cache,
-         indexed_by<
-               ordered_unique< tag<by_account>,  member<abi_cache,account_name,&abi_cache::account> >,
-               ordered_non_unique< tag<by_last_access>,  member<abi_cache,fc::time_point,&abi_cache::last_accessed> >
-         >
-   > abi_cache_index_t;
-
-   abi_cache_index_t abi_cache_index;
 
    static const action_name newaccount;
    static const action_name setabi;
@@ -336,105 +311,6 @@ void elasticsearch_plugin_impl::accepted_block( const chain::block_state_ptr& bs
    } catch (...) {
       elog("Unknown exception while accepted_block");
    }
-}
-
-void elasticsearch_plugin_impl::purge_abi_cache() {
-   if( abi_cache_index.size() < abi_cache_size ) return;
-
-   // remove the oldest (smallest) last accessed
-   auto& idx = abi_cache_index.get<by_last_access>();
-   auto itr = idx.begin();
-   if( itr != idx.end() ) {
-      idx.erase( itr );
-   }
-}
-
-bool elasticsearch_plugin_impl::get_abi_by_account(fc::variant &v, const account_name &name) {
-   fc::variant res;
-   if ( !elastic_client->get(accounts_index, std::to_string(name.value), res) )
-      return false;
-
-   try {
-      v = res["_source"]["abi"];
-   } catch( ... ) {
-      return false;
-   }
-   return true;
-}
-
-optional<abi_serializer> elasticsearch_plugin_impl::get_abi_serializer( account_name n ) {
-   if( n.good()) {
-      try {
-
-         auto itr = abi_cache_index.find( n );
-         if( itr != abi_cache_index.end() ) {
-            abi_cache_index.modify( itr, []( auto& entry ) {
-               entry.last_accessed = fc::time_point::now();
-            });
-
-            return itr->serializer;
-         }
-
-         fc::variant abi_v;
-         if(get_abi_by_account(abi_v, n)) {
-            abi_def abi;
-            try {
-               abi = abi_v.as<abi_def>();
-            } catch (...) {
-               ilog( "Unable to convert account abi to abi_def for ${n}", ( "n", n ));
-               return optional<abi_serializer>();
-            }
-
-            purge_abi_cache(); // make room if necessary
-            abi_cache entry;
-            entry.account = n;
-            entry.last_accessed = fc::time_point::now();
-            abi_serializer abis;
-            if( n == chain::config::system_account_name ) {
-               // redefine eosio setabi.abi from bytes to abi_def
-               // Done so that abi is stored as abi_def in elasticsearch instead of as bytes
-               auto itr = std::find_if( abi.structs.begin(), abi.structs.end(),
-                                          []( const auto& s ) { return s.name == "setabi"; } );
-               if( itr != abi.structs.end() ) {
-                  auto itr2 = std::find_if( itr->fields.begin(), itr->fields.end(),
-                                             []( const auto& f ) { return f.name == "abi"; } );
-                  if( itr2 != itr->fields.end() ) {
-                     if( itr2->type == "bytes" ) {
-                        itr2->type = "abi_def";
-                        // unpack setabi.abi as abi_def instead of as bytes
-                        abis.add_specialized_unpack_pack( "abi_def",
-                              std::make_pair<abi_serializer::unpack_function, abi_serializer::pack_function>(
-                                    []( fc::datastream<const char*>& stream, bool is_array, bool is_optional ) -> fc::variant {
-                                       EOS_ASSERT( !is_array && !is_optional, chain::elasticsearch_exception, "unexpected abi_def");
-                                       chain::bytes temp;
-                                       fc::raw::unpack( stream, temp );
-                                       return fc::variant( fc::raw::unpack<abi_def>( temp ) );
-                                    },
-                                    []( const fc::variant& var, fc::datastream<char*>& ds, bool is_array, bool is_optional ) {
-                                       EOS_ASSERT( false, chain::elasticsearch_exception, "never called" );
-                                    }
-                              ) );
-                     }
-                  }
-               }
-            }
-            abis.set_abi( abi, abi_serializer_max_time );
-            entry.serializer.emplace( std::move( abis ) );
-            abi_cache_index.insert( entry );
-            return entry.serializer;
-         }
-      } FC_CAPTURE_AND_LOG((n))
-   }
-   return optional<abi_serializer>();
-}
-
-template<typename T>
-fc::variant elasticsearch_plugin_impl::to_variant_with_abi( const T& obj ) {
-   fc::variant pretty_output;
-   abi_serializer::to_variant( obj, pretty_output,
-                               [&]( account_name n ) { return get_abi_serializer( n ); },
-                               abi_serializer_max_time );
-   return pretty_output;
 }
 
 void elasticsearch_plugin_impl::process_accepted_transaction( const chain::transaction_metadata_ptr& t ) {
@@ -661,7 +537,7 @@ void elasticsearch_plugin_impl::upsert_account(
       } else if( act.name == setabi ) {
          auto setabi = act.data_as<chain::setabi>();
 
-         abi_cache_index.erase( setabi.account );
+         abi_deserializer->erase_abi_cache( setabi.account );
 
          upsert_account_setabi(param_doc, setabi, now);
          account_id = setabi.account.value;
@@ -727,7 +603,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
 
    block_doc("block_num", static_cast<int32_t>(block_num));
    block_doc("block_id", block_id_str);
-   block_doc("block", to_variant_with_abi( *bs->block ));
+   block_doc("block", abi_deserializer->to_variant_with_abi( *bs->block ));
    block_doc("irreversible", false);
    block_doc("createAt", now.count());
 
@@ -832,7 +708,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    const auto trx_id_str = trx_id.str();
    const auto& trx = t->trx;
 
-   fc::from_variant( to_variant_with_abi( trx ), trans_doc );
+   fc::from_variant( abi_deserializer->to_variant_with_abi( trx ), trans_doc );
    trans_doc("trx_id", trx_id_str);
 
    fc::variant signing_keys;
@@ -932,7 +808,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
    for ( auto& atrace : base_action_traces) {
       fc::mutable_variant_object action_traces_doc;
       chain::base_action_trace &base = atrace.get();
-      fc::from_variant( to_variant_with_abi( base ), action_traces_doc );
+      fc::from_variant( abi_deserializer->to_variant_with_abi( base ), action_traces_doc );
       action_traces_doc("createdAt", now.count());
       auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
       bulk_action_traces.indexDocument("_doc", "", json);
@@ -950,7 +826,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
    if( !start_block_reached || !store_transaction_traces ) return;
 
    // transaction trace index
-   fc::from_variant( to_variant_with_abi( *t ), trans_traces_doc );
+   fc::from_variant( abi_deserializer->to_variant_with_abi( *t ), trans_traces_doc );
    trans_traces_doc("createAt", now.count());
 
    std::string json = fc::prune_invalid_utf8( fc::json::to_string( trans_traces_doc ) );
@@ -1239,6 +1115,8 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          std::string user_str = options.at( "elastic-user" ).as<std::string>();
          std::string password_str = options.at( "elastic-password" ).as<std::string>();
          my->elastic_client = std::make_shared<elasticsearch_client>(std::vector<std::string>({url_str}), user_str, password_str);
+         my->abi_deserializer = std::make_shared<deserializer>(
+            my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str);
 
          // hook up to signals on controller
          chain_plugin* chain_plug = app().find_plugin<chain_plugin>();

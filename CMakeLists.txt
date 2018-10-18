@@ -2,6 +2,7 @@ file(GLOB HEADERS "include/eosio/elasticsearch_plugin/*.hpp")
 add_library( elasticsearch_plugin
              elasticsearch_plugin.cpp
              elasticsearch_client.cpp
+             deserializer.cpp
              ${HEADERS} )
 
 target_link_libraries( elasticsearch_plugin appbase chain_plugin eosio_chain fc elasticlient)
