@@ -1,6 +1,5 @@
 #include "deserializer.hpp"
 #include "exceptions.hpp"
-#include "elasticsearch_client.hpp"
 
 #include <fc/variant.hpp>
 #include <boost/thread/mutex.hpp>
@@ -9,8 +8,6 @@ namespace eosio
 {
 
 void deserializer::purge_abi_cache() {
-   boost::lock_guard<boost::mutex> guard(cache_mtx);
-
    if( abi_cache_index.size() < abi_cache_size ) return;
 
    // remove the oldest (smallest) last accessed
@@ -22,11 +19,9 @@ void deserializer::purge_abi_cache() {
 }
 
 optional<fc::variant> deserializer::get_abi_by_account(const account_name &name) {
-   boost::lock_guard<boost::mutex> guard(client_mtx);
-
    fc::variant res;
    try {
-      if ( !elastic_client.get("accounts", std::to_string(name.value), res) )
+      if ( !es_client.get("accounts", std::to_string(name.value), res) )
          return optional<fc::variant>();
       return res["_source"]["abi"];
    } catch( elasticlient::ConnectionException& e) {
@@ -40,8 +35,6 @@ optional<fc::variant> deserializer::get_abi_by_account(const account_name &name)
 }
 
 optional<abi_serializer> deserializer::find_abi_cache(const account_name &name) {
-   boost::lock_guard<boost::mutex> guard(cache_mtx);
-
    auto itr = abi_cache_index.find( name );
    if( itr != abi_cache_index.end() ) {
       abi_cache_index.modify( itr, []( auto& entry ) {
@@ -54,15 +47,11 @@ optional<abi_serializer> deserializer::find_abi_cache(const account_name &name) 
 }
 
 void deserializer::insert_abi_cache( const abi_cache &entry ) {
-   boost::lock_guard<boost::mutex> guard(cache_mtx);
-
    abi_cache_index.insert( entry );
 }
 
 
 void deserializer::erase_abi_cache(const account_name &name) {
-   boost::lock_guard<boost::mutex> guard(cache_mtx);
-
    abi_cache_index.erase( name );
 }
 

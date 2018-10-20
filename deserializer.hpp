@@ -3,7 +3,7 @@
 #include <eosio/chain_plugin/chain_plugin.hpp>
 #include <boost/thread/mutex.hpp>
 
-#include "elasticsearch_client.hpp"
+#include "elastic_client.hpp"
 
 namespace eosio {
 
@@ -14,7 +14,7 @@ public:
                 const std::vector<std::string> url_list,
                 const std::string &user, const std::string &password):
       abi_cache_size(size), abi_serializer_max_time(abi_serializer_max_time),
-      elastic_client(url_list, user, password) {}
+      es_client(url_list, user, password) {}
 
    template<typename T>
    fc::variant to_variant_with_abi( const T& obj ) {
@@ -54,10 +54,7 @@ private:
    abi_cache_index_t abi_cache_index;
    fc::microseconds abi_serializer_max_time;
 
-   boost::mutex cache_mtx;
-   boost::mutex client_mtx;
-
-   elasticsearch_client elastic_client;
+   elastic_client es_client;
 
 };
 

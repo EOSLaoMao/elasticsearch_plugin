@@ -7,10 +7,10 @@
 
 namespace eosio {
 
-class elasticsearch_client
+class elastic_client
 {
 public:
-   elasticsearch_client(const std::vector<std::string> url_list, const std::string &user, const std::string &password)
+   elastic_client(const std::vector<std::string> url_list, const std::string &user, const std::string &password)
       :client(url_list, user, password, 60000) {};
 
    void delete_index(const std::string &index_name);
@@ -24,6 +24,7 @@ public:
    void search(const std::string &index_name, fc::variant& v, const std::string &query);
    void delete_by_query(const std::string &index_name, const std::string &query);
    void bulk_perform(elasticlient::SameIndexBulkData &bulk);
+   void bulk_perform(const std::string &bulk);
    void update(const std::string &index_name, const std::string &id, const std::string &body);
 
    std::string index_name;

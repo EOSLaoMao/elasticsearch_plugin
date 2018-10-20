@@ -10,6 +10,7 @@
 #include <fc/variant.hpp>
 #include <fc/variant_object.hpp>
 
+#include <boost/asio.hpp>
 #include <boost/chrono.hpp>
 #include <boost/format.hpp>
 #include <boost/algorithm/string.hpp>
@@ -24,10 +25,11 @@
 #include <utility>
 #include <unordered_map>
 
-#include "elasticsearch_client.hpp"
+#include "elastic_client.hpp"
 #include "exceptions.hpp"
 #include "mappings.hpp"
 #include "deserializer.hpp"
+#include "bulker.hpp"
 
 
 namespace eosio {
@@ -111,8 +113,10 @@ public:
    bool store_transaction_traces = true;
    bool store_action_traces = true;
 
-   std::shared_ptr<elasticsearch_client> elastic_client;
-   std::shared_ptr<deserializer> abi_deserializer;
+   std::unique_ptr<elastic_client> es_client;
+   std::unique_ptr<deserializer> abi_deserializer;
+   std::unique_ptr<bulker_pool> bulk_pool;
+   std::unique_ptr<boost::asio::thread_pool> thr_pool;
 
    size_t max_queue_size = 0;
    int queue_sleep_time = 0;
@@ -368,40 +372,6 @@ void elasticsearch_plugin_impl::process_accepted_block( const chain::block_state
    }
 }
 
-
-void handle_elasticsearch_exception( const std::string& desc, int line_num ) {
-   bool shutdown = true;
-   try {
-      try {
-         throw;
-      } catch( elasticlient::ConnectionException& e) {
-         elog( "elasticsearch connection error, ${desc}, line ${line}, ${what}",
-               ("desc", desc)( "line", line_num )( "what", e.what() ));
-      } catch( chain::response_code_exception& e) {
-         elog( "elasticsearch exception, ${desc}, line ${line}, ${what}",
-               ("desc", desc)( "line", line_num )( "what", e.to_detail_string() ));
-      } catch( chain::bulk_fail_exception& e) {
-         elog( "elasticsearch exception, ${desc}, line ${line}, ${what}",
-               ("desc", desc)( "line", line_num )( "what", e.to_detail_string() ));
-       } catch( fc::exception& er ) {
-         elog( "elasticsearch fc exception, ${desc}, line ${line}, ${details}",
-               ("desc", desc)( "line", line_num )( "details", er.to_detail_string()));
-      } catch( const std::exception& e ) {
-         elog( "elasticsearch std exception, ${desc}, line ${line}, ${what}",
-               ("desc", desc)( "line", line_num )( "what", e.what()));
-      } catch( ... ) {
-         elog( "elasticsearch unknown exception, ${desc}, line ${line_nun}", ("desc", desc)( "line_num", line_num ));
-      }
-   } catch (...) {
-      std::cerr << "Exception attempting to handle exception for " << desc << " " << line_num << std::endl;
-   }
-
-   if( shutdown ) {
-      // shutdown if elasticsearch failed to provide opportunity to fix issue and restart
-      app().quit();
-   }
-}
-
 void elasticsearch_plugin_impl::create_new_account(
    fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now )
 {
@@ -590,7 +560,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    auto block_states_json = fc::json::to_string( block_state_doc );
 
    try {
-      elastic_client->create( block_states_index, block_states_json, block_id_str );
+      es_client->create( block_states_index, block_states_json, block_id_str );
    } catch( ... ) {
       handle_elasticsearch_exception( block_id_str + "block_states create:" + block_states_json, __LINE__ );
    }
@@ -608,7 +578,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    auto json = fc::prune_invalid_utf8( fc::json::to_string( block_doc ) );
 
    try {
-      elastic_client->create( blocks_index, json, block_id_str );
+      es_client->create( blocks_index, json, block_id_str );
    } catch( ... ) {
       handle_elasticsearch_exception( block_id_str + "blocks index " + json, __LINE__ );
    }
@@ -657,7 +627,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       auto json = fc::json::to_string( doc );
 
       try {
-         elastic_client->update( block_states_index, block_id_str, json );
+         es_client->update( block_states_index, block_id_str, json );
       } catch( ... ) {
          handle_elasticsearch_exception( block_id_str + " block_states upsert:" + json, __LINE__ );
       }
@@ -681,7 +651,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
       auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
       try {
-         elastic_client->update( blocks_index, block_id_str, json );
+         es_client->update( blocks_index, block_id_str, json );
       } catch( ... ) {
          handle_elasticsearch_exception( block_id_str + " blocks upsert: " + json, __LINE__ );
       }
@@ -726,7 +696,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
 
    if( transactions_in_block && !bulk_trans.empty() ) {
       try {
-         elastic_client->bulk_perform(bulk_trans);
+         es_client->bulk_perform(bulk_trans);
       } catch( ... ) {
          handle_elasticsearch_exception( "bulk transaction upsert " + bulk_trans.body(), __LINE__ );
       }
@@ -767,13 +737,28 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
    doc("doc_as_upsert", true);
    doc("retry_on_conflict", 100);
 
-   auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
+   // auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
-   try {
-      elastic_client->update(trans_index, trx_id_str, json);
-   } catch( ... ) {
-      handle_elasticsearch_exception( trx_id_str + " trans upsert " + json, __LINE__ );
-   }
+   // try {
+   //    es_client->update(trans_index, trx_id_str, json);
+   // } catch( ... ) {
+   //    handle_elasticsearch_exception( trx_id_str + " trans upsert " + json, __LINE__ );
+   // }
+
+   boost::asio::post( *thr_pool,
+      [=]()
+      {
+         fc::mutable_variant_object action_doc;
+         action_doc("_index", trans_index);
+         action_doc("_type", "_doc");
+         action_doc("_id", trx_id_str);
+
+         auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
+         auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
+
+         bulker& bulk = bulk_pool->get();
+         bulk.append_document(std::move(action), std::move(json));
+      });
 }
 
 void elasticsearch_plugin_impl::_process_applied_transaction( const chain::transaction_trace_ptr& t ) {
@@ -835,7 +820,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
 
    if ( !bulk_account_upserts.empty() ) {
       try {
-         elastic_client->bulk_perform(bulk_account_upserts);
+         es_client->bulk_perform(bulk_account_upserts);
       } catch( ... ) {
          handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
       }
@@ -852,7 +837,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
 
    if ( !bulk_action_traces.empty() ) {
       try {
-         elastic_client->bulk_perform(bulk_action_traces);
+         es_client->bulk_perform(bulk_action_traces);
       } catch( ... ) {
          handle_elasticsearch_exception( "action traces " + bulk_action_traces.body(), __LINE__ );
       }
@@ -867,7 +852,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
 
    std::string json = fc::prune_invalid_utf8( fc::json::to_string( trans_traces_doc ) );
    try {
-      elastic_client->index(trans_traces_index, json);
+      es_client->index(trans_traces_index, json);
    } catch( ... ) {
       handle_elasticsearch_exception( "trans_traces index: " + json, __LINE__ );
    }
@@ -986,24 +971,24 @@ void elasticsearch_plugin_impl::consume_blocks() {
 
 void elasticsearch_plugin_impl::delete_index() {
    ilog("drop elasticsearch index");
-   elastic_client->delete_index( accounts_index );
-   elastic_client->delete_index( blocks_index );
-   elastic_client->delete_index( trans_index );
-   elastic_client->delete_index( block_states_index );
-   elastic_client->delete_index( trans_traces_index );
-   elastic_client->delete_index( action_traces_index );
+   es_client->delete_index( accounts_index );
+   es_client->delete_index( blocks_index );
+   es_client->delete_index( trans_index );
+   es_client->delete_index( block_states_index );
+   es_client->delete_index( trans_traces_index );
+   es_client->delete_index( action_traces_index );
 }
 
 void elasticsearch_plugin_impl::init() {
    ilog("create elasticsearch index");
-   elastic_client->init_index( accounts_index, accounts_mapping );
-   elastic_client->init_index( blocks_index, blocks_mapping );
-   elastic_client->init_index( trans_index, trans_mapping );
-   elastic_client->init_index( block_states_index, block_states_mapping );
-   elastic_client->init_index( trans_traces_index, trans_traces_mapping );
-   elastic_client->init_index( action_traces_index, action_traces_mapping );
+   es_client->init_index( accounts_index, accounts_mapping );
+   es_client->init_index( blocks_index, blocks_mapping );
+   es_client->init_index( trans_index, trans_mapping );
+   es_client->init_index( block_states_index, block_states_mapping );
+   es_client->init_index( trans_traces_index, trans_traces_mapping );
+   es_client->init_index( action_traces_index, action_traces_mapping );
 
-   if (elastic_client->count_doc(accounts_index) == 0) {
+   if (es_client->count_doc(accounts_index) == 0) {
       auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
       
@@ -1015,7 +1000,7 @@ void elasticsearch_plugin_impl::init() {
       account_doc("account_controls", fc::variants());
       auto json = fc::json::to_string(account_doc);
       try {
-         elastic_client->create(accounts_index, json, std::to_string(acc_name));
+         es_client->create(accounts_index, json, std::to_string(acc_name));
       } catch( ... ) {
          handle_elasticsearch_exception( "create system account " + json, __LINE__ );
       }
@@ -1150,9 +1135,11 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          if ( url_str.back() != '/' ) url_str.push_back('/');
          std::string user_str = options.at( "elastic-user" ).as<std::string>();
          std::string password_str = options.at( "elastic-password" ).as<std::string>();
-         my->elastic_client = std::make_shared<elasticsearch_client>(std::vector<std::string>({url_str}), user_str, password_str);
-         my->abi_deserializer = std::make_shared<deserializer>(
-            my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str);
+         my->es_client.reset( new elastic_client(std::vector<std::string>({url_str}), user_str, password_str) );
+         my->abi_deserializer.reset( new deserializer(
+               my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str) );
+         my->bulk_pool.reset( new bulker_pool(2, 100, std::vector<std::string>({url_str}), user_str, password_str) );
+         my->thr_pool.reset( new boost::asio::thread_pool(4) );
 
          // hook up to signals on controller
          chain_plugin* chain_plug = app().find_plugin<chain_plugin>();
