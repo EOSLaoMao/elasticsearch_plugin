@@ -53,9 +53,8 @@ void bulker::append_document( std::string action, std::string source ) {
 
 bulker_pool::bulker_pool(size_t size, size_t bulk_size,
                          const std::vector<std::string> url_list,
-                         const std::string &user, const std::string &password)
+                         const std::string &user, const std::string &password): pool_size(size)
 {
-   pool_size = size;
    for (int i = 0; i < pool_size; ++i) {
       bulker_vec.emplace_back( new bulker(bulk_size, url_list, user, password) );
    }
@@ -67,14 +66,12 @@ bulker& bulker_pool::get() {
    }
 
    size_t cur_idx = index;
-   if ( cur_idx >= pool_size ) {
-      index = 0;
-   }
 
    if ( cur_idx >= pool_size )
       cur_idx = cur_idx % pool_size;
    auto ptr = bulker_vec[cur_idx].get();
-   index += 1;
+
+   index = cur_idx + 1;
 
    return *ptr;
 }
