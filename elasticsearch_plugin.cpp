@@ -208,6 +208,7 @@ elasticsearch_plugin_impl::~elasticsearch_plugin_impl()
          condition.notify_one();
 
          consume_thread.join();
+         thr_pool->join();
       } catch( std::exception& e ) {
          elog( "Exception on elasticsearch_plugin shutdown of consume thread: ${e}", ("e", e.what()));
       }
@@ -550,37 +551,90 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
-   fc::mutable_variant_object block_state_doc;
-   block_state_doc("block_num", static_cast<int32_t>(block_num));
-   block_state_doc("block_id", block_id_str);
-   block_state_doc("validated", bs->validated);
-   block_state_doc("block_header_state", bs);
-   block_state_doc("createAt", now.count());
+   auto source =
+      "if (!ctx._source.containsKey(\"block_num\")) ctx._source.block_num = params.block_num;"
+      "if (!ctx._source.containsKey(\"block_id\")) ctx._source.block_id = params.block_id;"
+      "if (!ctx._source.containsKey(\"validated\")) ctx._source.validated = params.validated;"
+      "if (!ctx._source.containsKey(\"block_header_state\")) ctx._source.block_header_state = params.block_header_state;"
+      "ctx._source.createAt = params.createAt;";
 
-   auto block_states_json = fc::json::to_string( block_state_doc );
+   fc::mutable_variant_object doc;
+   fc::mutable_variant_object params_doc;
+   fc::mutable_variant_object script_doc;
 
-   try {
-      es_client->create( block_states_index, block_states_json, block_id_str );
-   } catch( ... ) {
-      handle_elasticsearch_exception( block_id_str + "block_states create:" + block_states_json, __LINE__ );
-   }
+   params_doc("block_num", static_cast<int32_t>(block_num));
+   params_doc("block_id", block_id_str);
+   params_doc("validated", bs->validated);
+   params_doc("block_header_state", bs);
+   params_doc("createAt", now.count());
 
-   if( !store_blocks ) return;
+   script_doc("source", source);
+   script_doc("lang", "painless");
+   script_doc("params", params_doc);
 
-   fc::mutable_variant_object block_doc;
+   doc("script", script_doc);
+   doc("scripted_upsert", true);
+   doc("upsert", fc::variant_object());
 
-   block_doc("block_num", static_cast<int32_t>(block_num));
-   block_doc("block_id", block_id_str);
-   block_doc("block", abi_deserializer->to_variant_with_abi( *bs->block ));
-   block_doc("irreversible", false);
-   block_doc("createAt", now.count());
+   boost::asio::post( *thr_pool,
+      [ doc{std::move(doc)}, block_id_str, this ]()
+      {
+         fc::mutable_variant_object action_doc;
+         action_doc("_index", block_states_index);
+         action_doc("_type", "_doc");
+         action_doc("_id", block_id_str);
+         action_doc("retry_on_conflict", 100);
 
-   auto json = fc::prune_invalid_utf8( fc::json::to_string( block_doc ) );
+         auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
+         auto json = fc::json::to_string( doc );
 
-   try {
-      es_client->create( blocks_index, json, block_id_str );
-   } catch( ... ) {
-      handle_elasticsearch_exception( block_id_str + "blocks index " + json, __LINE__ );
+         bulker& bulk = bulk_pool->get();
+         bulk.append_document(std::move(action), std::move(json));
+      });
+
+   if( store_blocks ) {
+
+      auto source =
+         "if (!ctx._source.containsKey(\"block_num\")) ctx._source.block_num = params.block_num;"
+         "if (!ctx._source.containsKey(\"block_id\")) ctx._source.block_id = params.block_id;"
+         "if (!ctx._source.containsKey(\"block\")) ctx._source.block = params.block;"
+         "if (!ctx._source.containsKey(\"irreversible\")) ctx._source.irreversible = params.irreversible;"
+         "ctx._source.createAt = params.createAt;";
+
+      fc::mutable_variant_object doc;
+      fc::mutable_variant_object params_doc;
+      fc::mutable_variant_object script_doc;
+
+      params_doc("block_num", static_cast<int32_t>(block_num));
+      params_doc("block_id", block_id_str);
+      params_doc("block", abi_deserializer->to_variant_with_abi( *bs->block ));
+      params_doc("irreversible", false);
+      params_doc("createAt", now.count());
+
+      script_doc("source", source);
+      script_doc("lang", "painless");
+      script_doc("params", params_doc);
+
+      doc("script", script_doc);
+      doc("scripted_upsert", true);
+      doc("upsert", fc::variant_object());
+
+      boost::asio::post( *thr_pool,
+         [ doc{std::move(doc)}, block_id_str, this ]()
+         {
+            fc::mutable_variant_object action_doc;
+            action_doc("_index", blocks_index);
+            action_doc("_type", "_doc");
+            action_doc("_id", block_id_str);
+            action_doc("retry_on_conflict", 100);
+
+
+            auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
+            auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
+
+            bulker& bulk = bulk_pool->get();
+            bulk.append_document(std::move(action), std::move(json));
+         });
    }
 }
 
@@ -622,15 +676,22 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
 
       doc("script", script_doc);
       doc("upsert", block_state_doc);
-      doc("retry_on_conflict", 100);
 
-      auto json = fc::json::to_string( doc );
+      boost::asio::post( *thr_pool,
+         [ doc{std::move(doc)}, block_id_str, this ]()
+         {
+            fc::mutable_variant_object action_doc;
+            action_doc("_index", block_states_index);
+            action_doc("_type", "_doc");
+            action_doc("_id", block_id_str);
+            action_doc("retry_on_conflict", 100);
 
-      try {
-         es_client->update( block_states_index, block_id_str, json );
-      } catch( ... ) {
-         handle_elasticsearch_exception( block_id_str + " block_states upsert:" + json, __LINE__ );
-      }
+            auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
+            auto json = fc::json::to_string( doc );
+
+            bulker& bulk = bulk_pool->get();
+            bulk.append_document(std::move(action), std::move(json));
+         });
    }
 
    if( store_blocks ) {
@@ -646,22 +707,28 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
 
       doc("script", script_doc);
       doc("upsert", block_doc);
-      doc("retry_on_conflict", 100);
 
-      auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
+      boost::asio::post( *thr_pool,
+         [ doc{std::move(doc)}, this, block_id_str ]()
+         {
+            fc::mutable_variant_object action_doc;
+            action_doc("_index", blocks_index);
+            action_doc("_type", "_doc");
+            action_doc("_id", block_id_str);
+            action_doc("retry_on_conflict", 100);
 
-      try {
-         es_client->update( blocks_index, block_id_str, json );
-      } catch( ... ) {
-         handle_elasticsearch_exception( block_id_str + " blocks upsert: " + json, __LINE__ );
-      }
+
+            auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
+            auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
+
+            bulker& bulk = bulk_pool->get();
+            bulk.append_document(std::move(action), std::move(json));
+         });
    }
 
    if( !store_transactions ) return;
 
-   bool transactions_in_block = false;
-
-   elasticlient::SameIndexBulkData bulk_trans(trans_index);
+   std::vector< std::pair<std::string, fc::variant> > trans_vec;
 
    for( const auto& receipt : bs->block->transactions ) {
       string trx_id_str;
@@ -686,21 +753,30 @@ void elasticsearch_plugin_impl::_process_irreversible_block(const chain::block_s
 
       doc("doc", trans_doc);
       doc("doc_as_upsert", true);
-      doc("retry_on_conflict", 100);
 
-      auto json = fc::json::to_string( doc );
-
-      bulk_trans.updateDocument("_doc", trx_id_str, json);
-      transactions_in_block = true;
+      trans_vec.emplace_back( trx_id_str, std::move(doc) );
    }
 
-   if( transactions_in_block && !bulk_trans.empty() ) {
-      try {
-         es_client->bulk_perform(bulk_trans);
-      } catch( ... ) {
-         handle_elasticsearch_exception( "bulk transaction upsert " + bulk_trans.body(), __LINE__ );
-      }
+   if ( !trans_vec.empty() ) {
+      boost::asio::post( *thr_pool,
+         [ trans_vec{std::move(trans_vec)}, this ]()
+         {
+            for (auto& entry : trans_vec) {
+               fc::mutable_variant_object action_doc;
+               action_doc("_index", trans_index);
+               action_doc("_type", "_doc");
+               action_doc("_id", entry.first);
+               action_doc("retry_on_conflict", 100);
+
+               auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
+               auto json = fc::json::to_string( entry.second );
+
+               bulker& bulk = bulk_pool->get();
+               bulk.append_document(std::move(action), std::move(json));
+            }
+         });
    }
+
 }
 
 void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::transaction_metadata_ptr& t ) {
@@ -735,23 +811,15 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( const chain::tran
 
    doc("doc", trans_doc);
    doc("doc_as_upsert", true);
-   doc("retry_on_conflict", 100);
-
-   // auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
-
-   // try {
-   //    es_client->update(trans_index, trx_id_str, json);
-   // } catch( ... ) {
-   //    handle_elasticsearch_exception( trx_id_str + " trans upsert " + json, __LINE__ );
-   // }
 
    boost::asio::post( *thr_pool,
-      [=]()
+      [ doc{std::move(doc)}, trx_id_str, this ]()
       {
          fc::mutable_variant_object action_doc;
          action_doc("_index", trans_index);
          action_doc("_type", "_doc");
          action_doc("_id", trx_id_str);
+         action_doc("retry_on_conflict", 100);
 
          auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
          auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
@@ -765,14 +833,11 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
-   elasticlient::SameIndexBulkData bulk_action_traces(action_traces_index);
    elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
 
    std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;
    std::vector<std::reference_wrapper<chain::base_action_trace>> base_action_traces; // without inline action traces
 
-
-   fc::mutable_variant_object trans_traces_doc;
    bool executed = t->receipt.valid() && t->receipt->status == chain::transaction_receipt_header::executed;
 
    std::stack<std::reference_wrapper<chain::action_trace>> stack;
@@ -826,37 +891,59 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
       }
    }
 
+   std::vector<fc::variant> actions_vec;
    for ( auto& atrace : base_action_traces) {
       fc::mutable_variant_object action_traces_doc;
       chain::base_action_trace &base = atrace.get();
       fc::from_variant( abi_deserializer->to_variant_with_abi( base ), action_traces_doc );
       action_traces_doc("createdAt", now.count());
-      auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
-      bulk_action_traces.indexDocument("_doc", "", json);
+      actions_vec.push_back( std::move(action_traces_doc) );
    }
 
-   if ( !bulk_action_traces.empty() ) {
-      try {
-         es_client->bulk_perform(bulk_action_traces);
-      } catch( ... ) {
-         handle_elasticsearch_exception( "action traces " + bulk_action_traces.body(), __LINE__ );
-      }
+   bool no_actions = actions_vec.empty();
+
+   if ( !no_actions ) {
+      boost::asio::post( *thr_pool,
+         [ actions_vec{std::move(actions_vec)}, this ]()
+         {
+            for (auto& entry : actions_vec) {
+               fc::mutable_variant_object action_doc;
+               action_doc("_index", action_traces_index);
+               action_doc("_type", "_doc");
+               action_doc("retry_on_conflict", 100);
+
+               auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
+               auto json = fc::prune_invalid_utf8( fc::json::to_string(entry) );
+
+               bulker& bulk = bulk_pool->get();
+               bulk.append_document(std::move(action), std::move(json));
+            }
+         });
    }
 
-   if( bulk_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
+   if( no_actions ) return; //< do not index transaction_trace if all action_traces filtered out
    if( !start_block_reached || !store_transaction_traces ) return;
 
    // transaction trace index
+   fc::mutable_variant_object trans_traces_doc;
    fc::from_variant( abi_deserializer->to_variant_with_abi( *t ), trans_traces_doc );
    trans_traces_doc("createAt", now.count());
 
-   std::string json = fc::prune_invalid_utf8( fc::json::to_string( trans_traces_doc ) );
-   try {
-      es_client->index(trans_traces_index, json);
-   } catch( ... ) {
-      handle_elasticsearch_exception( "trans_traces index: " + json, __LINE__ );
-   }
+   boost::asio::post( *thr_pool,
+      [ trans_traces_doc{std::move(trans_traces_doc)}, this ]()
+      {
+         fc::mutable_variant_object action_doc;
+         action_doc("_index", trans_traces_index);
+         action_doc("_type", "_doc");
+         action_doc("retry_on_conflict", 100);
 
+         auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
+         auto json = fc::prune_invalid_utf8( fc::json::to_string( trans_traces_doc ) );
+
+         bulker& bulk = bulk_pool->get();
+         bulk.append_document(std::move(action), std::move(json));
+
+      });
 }
 
 void elasticsearch_plugin_impl::consume_blocks() {
@@ -1021,6 +1108,12 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
          "The target queue size between nodeos and elasticsearch plugin thread.")
          ("elastic-abi-cache-size", bpo::value<uint32_t>()->default_value(2048),
           "The maximum size of the abi cache for serializing data.")
+         ("elastic-thread-pool-size", bpo::value<size_t>()->default_value(4),
+          "The size of the data processing thread pool.")
+         ("elastic-bulker-pool-size", bpo::value<size_t>()->default_value(2),
+          "The size of the elasticsearch bulker pool.")
+         ("elastic-bulk-size", bpo::value<size_t>()->default_value(1000),
+          "The size of the each bulk request, count by num of documents.")
          ("elastic-index-wipe", bpo::bool_switch()->default_value(false),
          "Required with --replay-blockchain, --hard-replay-blockchain, or --delete-all-blocks to delete elasticsearch index."
          "This option required to prevent accidental wipe of index.")
@@ -1135,11 +1228,17 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          if ( url_str.back() != '/' ) url_str.push_back('/');
          std::string user_str = options.at( "elastic-user" ).as<std::string>();
          std::string password_str = options.at( "elastic-password" ).as<std::string>();
+         size_t thr_pool_size = options.at( "elastic-thread-pool-size" ).as<size_t>();
+         size_t bulk_pool_size = options.at( "elastic-bulker-pool-size" ).as<size_t>();
+         size_t bulk_size = options.at( "elastic-bulk-size" ).as<size_t>();
+
          my->es_client.reset( new elastic_client(std::vector<std::string>({url_str}), user_str, password_str) );
          my->abi_deserializer.reset( new deserializer(
                my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str) );
-         my->bulk_pool.reset( new bulker_pool(2, 100, std::vector<std::string>({url_str}), user_str, password_str) );
-         my->thr_pool.reset( new boost::asio::thread_pool(4) );
+         ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
+         my->thr_pool.reset( new boost::asio::thread_pool(thr_pool_size) );
+         ilog("init bulker pool, size: ${bps}, bulk size: ${bs}", ("bps", bulk_pool_size)("bs", bulk_size));
+         my->bulk_pool.reset( new bulker_pool(bulk_pool_size, bulk_size, std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller
          chain_plugin* chain_plug = app().find_plugin<chain_plugin>();

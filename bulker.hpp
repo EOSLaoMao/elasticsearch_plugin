@@ -13,7 +13,8 @@ public:
           const std::vector<std::string> url_list,
           const std::string &user, const std::string &password):
       bulk_size(bulk_size), es_client(url_list, user, password), body(new std::string()) {}
-
+   ~bulker();
+   
    void append_document( std::string action, std::string source );
 
    size_t size();

@@ -78,12 +78,11 @@ uint64_t elastic_client::count_doc(const std::string &index_name, const std::str
    return v["count"].as_uint64();
 }
 
-bool elastic_client::get(const std::string &index_name, const std::string &id, fc::variant &res)
+void elastic_client::get(const std::string &index_name, const std::string &id, fc::variant &res)
 {
    cpr::Response resp = client.get(index_name, "_doc", id);
-   if ( !is_2xx(resp.status_code) ) return false;
+   EOS_ASSERT(is_2xx(resp.status_code), chain::response_code_exception, "${code} ${text}", ("code", resp.status_code)("text", resp.text));
    res = fc::json::from_string(resp.text);
-   return true;
 }
 
 void elastic_client::search(const std::string &index_name, fc::variant &v, const std::string &query)

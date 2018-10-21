@@ -3,6 +3,13 @@
 
 namespace eosio {
 
+bulker::~bulker() {
+   ilog("draining bulker, size: ${n}", ("n", body_size));
+   if ( !body->empty() ) {
+      perform( std::move(body) );
+   }
+}
+
 size_t bulker::size() {
    return body_size;
 }
@@ -19,7 +26,7 @@ void bulker::perform( std::unique_ptr<std::string> &&body) {
 }
 
 void bulker::append_document( std::string action, std::string source ) {
-   bool hit_size = false;
+   bool trigger = false;
    std::unique_ptr<std::string> temp( new std::string() );
 
    std::string doc( std::move(action) );
@@ -35,11 +42,11 @@ void bulker::append_document( std::string action, std::string source ) {
       if ( body_size >= bulk_size ) {
          body.swap( temp );
          body_size = 0;
-         hit_size = true;
+         trigger = true;
       }
    }
 
-   if ( hit_size ) {
+   if ( trigger ) {
       perform( std::move(temp) );
    }
 }
@@ -65,7 +72,7 @@ bulker& bulker_pool::get() {
    }
 
    if ( cur_idx >= pool_size )
-      cur_idx = cur_idx % (pool_size - 1);
+      cur_idx = cur_idx % pool_size;
    auto ptr = bulker_vec[cur_idx].get();
    index += 1;
 

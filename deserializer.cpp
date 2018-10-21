@@ -21,8 +21,7 @@ void deserializer::purge_abi_cache() {
 optional<fc::variant> deserializer::get_abi_by_account(const account_name &name) {
    fc::variant res;
    try {
-      if ( !es_client.get("accounts", std::to_string(name.value), res) )
-         return optional<fc::variant>();
+      es_client.get("accounts", std::to_string(name.value), res);
       return res["_source"]["abi"];
    } catch( elasticlient::ConnectionException& e) {
       elog( "elasticsearch connection error, line ${line}, ${what}",
@@ -30,7 +29,6 @@ optional<fc::variant> deserializer::get_abi_by_account(const account_name &name)
    } catch( ... ) {
       // missing abi field
    }
-
    return optional<fc::variant>();
 }
 
