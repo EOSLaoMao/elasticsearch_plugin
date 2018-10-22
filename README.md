@@ -4,6 +4,37 @@ Nodeos plugin for archiving blockchain data into Elasticsearch, inspired by [mon
 
 **Currently the plugin only work with [official eosio repository](https://github.com/EOSIO/eos).**
 
+## Benchmark
+
+Detail: [Benchmark](./benchmark/benchmark.md)
+
+### Replay 10000 Block
+
+|                      | elapse(s) | speed(b/s) |
+| -------------------- |:---------:|:----------:|
+| elasticsearch_plugin | 548       | 18.25      |
+| mongo_db_plugin      | 694       | 14.41      |
+
+### Replay 100000 Block
+
+|                      | elapse(s) | speed(b/s) |
+| -------------------- |:---------:|:----------:|
+| elasticsearch_plugin | 663       | 150.83     |
+| mongo_db_plugin      | 987       | 101.32     |
+
+## Performance Tuning
+
+The most important thing: [Tune for indexing speed](https://www.elastic.co/guide/en/elasticsearch/reference/master/tune-for-indexing-speed.html)
+
+Also, in the benchmark, `elasticsearch_plugin` is running with default config. For production deploy, you can tweak some config.
+
+```text
+  --elastic-abi-cache-size arg (=2048)           The maximum size of the abi cache for serializing data.
+  --elastic-thread-pool-size arg (=4)            The maximum size of the abi cache for.
+  --elastic-bulker-pool-size arg (=2)            The size of the data processing thread.
+  --elastic-bulk-size arg (=1000)                The size of the elasticsearch bulker.
+```
+
 ## Installation
 
 ### Install `EOSLaoMao/elasticlient`
@@ -64,6 +95,12 @@ Config Options for eosio::elasticsearch_plugin:
                                                 and elasticsearch plugin thread.
   --elastic-abi-cache-size arg (=2048)          The maximum size of the abi cache for 
                                                 serializing data.
+  --elastic-thread-pool-size arg (=4)           The size of the data processing thread 
+                                                pool.
+  --elastic-bulker-pool-size arg (=2)           The size of the elasticsearch bulker 
+                                                pool.
+  --elastic-bulk-size arg (=1000)               The size of the each bulk request, 
+                                                count by num of documents.
   --elastic-index-wipe                          Required with --replay-blockchain, 
                                                 --hard-replay-blockchain, or 
                                                 --delete-all-blocks to delete 
@@ -99,39 +136,3 @@ Config Options for eosio::elasticsearch_plugin:
                                                 all from reciever:action. Receiver may 
                                                 not be blank.
 ```
-
-## Benchmark
-
-### Hardware
-
-```text
-Processor: AMD® Ryzen 5 1600 six-core processor × 12
-Memory:    2 × 8GB DDR4 2400
-```
-
-### Configuration
-
-```bash
-./build/programs/nodeos/nodeos --data-dir=dev_config/data \
-    --config-dir=dev_config \
-    --replay-blockchain \
-    --elastic-url=http://localhost:9200/ \
-    --elastic-queue-size=512 \
-    --elastic-abi-cache-size=8192 \
-    --elastic-index-wipe
-
-./build/programs/nodeos/nodeos --data-dir=dev_config/data \
-    --config-dir=dev_config \
-    --replay-blockchain \
-    --mongodb-uri=mongodb://root:example@localhost:27017/eos?authSource=admin \
-    --mongodb-queue-size=512 \
-    --mongodb-abi-cache-size=8192 \
-    --mongodb-wipe
-```
-
-### Replay 10000 Block
-
-|                      | blocks | elapse(s) | speed(b/s) |
-| -------------------- |:------:|:---------:|:----------:|
-| mongo_db_plugin      | 10000  | 694       | 14.41      |
-| elasticsearch_plugin | 10000  | 2050      | 4.88       |

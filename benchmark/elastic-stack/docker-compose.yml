@@ -1,0 +1,42 @@
+version: '3.6'
+
+services:
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.4.2
+    hostname: elasticsearch
+    volumes:
+      - ./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+      - ./esdata1:/usr/share/elasticsearch/data
+    ports: ['9200:9200', '9300:9300']
+    environment:
+      - "ES_JAVA_OPTS=-Xmx4G -Xms4G"
+      - ELASTIC_PASSWORD=changeme
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    restart: always
+    networks:
+      - esnet
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:6.4.2
+    volumes:
+      - ./kibana.yml:/usr/share/kibana/config/kibana.yaml
+    ports: ['5601:5601']
+    restart: always
+    networks:
+      - esnet
+    depends_on:
+      - elasticsearch
+    environment:
+      - SERVER_NAME=kibana
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - SERVER_HOST=0.0.0.0
+      - LOGGING_QUIET=true
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=changeme
+
+networks:
+  esnet:

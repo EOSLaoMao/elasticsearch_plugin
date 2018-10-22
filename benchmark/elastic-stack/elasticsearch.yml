@@ -1,0 +1,6 @@
+cluster.name: demo-cluster
+node.name: elastic-001-data
+network.host: 0.0.0.0
+discovery.type: single-node
+
+bootstrap.memory_lock: true
