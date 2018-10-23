@@ -24,15 +24,15 @@ Detail: [Benchmark](./benchmark/benchmark.md)
 
 ## Performance Tuning
 
-The most important thing: [Tune for indexing speed](https://www.elastic.co/guide/en/elasticsearch/reference/master/tune-for-indexing-speed.html)
+[Tune for indexing speed](https://www.elastic.co/guide/en/elasticsearch/reference/master/tune-for-indexing-speed.html)
 
-Also, in the benchmark, `elasticsearch_plugin` is running with default config. For production deploy, you can tweak some config.
+In the benchmark, `elasticsearch_plugin` is running with default config. For production deploy, you can tweak some config.
 
 ```text
   --elastic-abi-cache-size arg (=2048)           The maximum size of the abi cache for serializing data.
   --elastic-thread-pool-size arg (=4)            The maximum size of the abi cache for.
   --elastic-bulker-pool-size arg (=2)            The size of the data processing thread.
-  --elastic-bulk-size arg (=1000)                The size of the elasticsearch bulker.
+  --elastic-bulk-size arg (=5)                   The size(megabytes) of the each bulk request.
 ```
 
 ## Installation
@@ -91,7 +91,7 @@ The usage of `elasticsearch_plugin` is similar to [mongo_db_plugin](https://gith
 
 ```plain
 Config Options for eosio::elasticsearch_plugin:
-  -q [ --elastic-queue-size ] arg (=512)        The target queue size between nodeos 
+  -q [ --elastic-queue-size ] arg (=1024)       The target queue size between nodeos 
                                                 and elasticsearch plugin thread.
   --elastic-abi-cache-size arg (=2048)          The maximum size of the abi cache for 
                                                 serializing data.
@@ -99,8 +99,8 @@ Config Options for eosio::elasticsearch_plugin:
                                                 pool.
   --elastic-bulker-pool-size arg (=2)           The size of the elasticsearch bulker 
                                                 pool.
-  --elastic-bulk-size arg (=1000)               The size of the each bulk request, 
-                                                count by num of documents.
+  --elastic-bulk-size arg (=5)                  The size(megabytes) of the each bulk 
+                                                request.
   --elastic-index-wipe                          Required with --replay-blockchain, 
                                                 --hard-replay-blockchain, or 
                                                 --delete-all-blocks to delete 
@@ -136,3 +136,9 @@ Config Options for eosio::elasticsearch_plugin:
                                                 all from reciever:action. Receiver may 
                                                 not be blank.
 ```
+
+## TODO
+
+- [ ] Imporve filer-on and filer-out feature, see: [https://github.com/EOSIO/eos/pull/5670](https://github.com/EOSIO/eos/pull/5670)
+- [ ] Due to `libcurl` [100-continue feature](https://curl.haxx.se/mail/lib-2017-07/0013.html), consider replace [EOSLaoMao/elasticlient](https://github.com/EOSLaoMao/elasticlient) with other simple http client like [https://cpp-netlib.org/#](https://cpp-netlib.org/#)
+- [ ] Improve multi-thread efficiency.

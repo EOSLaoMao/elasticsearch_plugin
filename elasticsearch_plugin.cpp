@@ -1104,7 +1104,7 @@ elasticsearch_plugin::~elasticsearch_plugin(){}
 
 void elasticsearch_plugin::set_program_options(options_description&, options_description& cfg) {
    cfg.add_options()
-         ("elastic-queue-size,q", bpo::value<uint32_t>()->default_value(512),
+         ("elastic-queue-size,q", bpo::value<uint32_t>()->default_value(1024),
          "The target queue size between nodeos and elasticsearch plugin thread.")
          ("elastic-abi-cache-size", bpo::value<uint32_t>()->default_value(2048),
           "The maximum size of the abi cache for serializing data.")
@@ -1112,8 +1112,8 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
           "The size of the data processing thread pool.")
          ("elastic-bulker-pool-size", bpo::value<size_t>()->default_value(2),
           "The size of the elasticsearch bulker pool.")
-         ("elastic-bulk-size", bpo::value<size_t>()->default_value(1000),
-          "The size of the each bulk request, count by num of documents.")
+         ("elastic-bulk-size", bpo::value<size_t>()->default_value(5),
+          "The size(megabytes) of the each bulk request.")
          ("elastic-index-wipe", bpo::bool_switch()->default_value(false),
          "Required with --replay-blockchain, --hard-replay-blockchain, or --delete-all-blocks to delete elasticsearch index."
          "This option required to prevent accidental wipe of index.")
@@ -1237,8 +1237,8 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str) );
          ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
          my->thr_pool.reset( new boost::asio::thread_pool(thr_pool_size) );
-         ilog("init bulker pool, size: ${bps}, bulk size: ${bs}", ("bps", bulk_pool_size)("bs", bulk_size));
-         my->bulk_pool.reset( new bulker_pool(bulk_pool_size, bulk_size, std::vector<std::string>({url_str}), user_str, password_str) );
+         ilog("init bulker pool, size: ${bps}, bulk size: ${bs}mb", ("bps", bulk_pool_size)("bs", bulk_size));
+         my->bulk_pool.reset( new bulker_pool(bulk_pool_size, bulk_size * 1024 * 1024, std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller
          chain_plugin* chain_plug = app().find_plugin<chain_plugin>();
