@@ -124,17 +124,15 @@ Config Options for eosio::elasticsearch_plugin:
                                                 elasticsearch.
   --elastic-store-action-traces arg (=1)        Enables storing action traces in 
                                                 elasticsearch.
-  --elasticsearch-filter-on arg                 elasticsearch: Track actions which 
-                                                match receiver:action:actor. Actor may 
-                                                be blank to include all. Receiver and 
-                                                Action may not be blank. Default is * 
-                                                include everything.
-  --elasticsearch-filter-out arg                elasticsearch: Do not track actions 
-                                                which match receiver:action:actor. 
-                                                Action and Actor both blank excludes 
-                                                all from reciever. Actor blank excludes
-                                                all from reciever:action. Receiver may 
-                                                not be blank.
+  --elastic-filter-on arg                       Track actions which match 
+                                                receiver:action:actor. Receiver, 
+                                                Action, & Actor may be blank to include
+                                                all. i.e. eosio:: or :transfer:  Use * 
+                                                or leave unspecified to include all.
+  --elastic-filter-out arg                      Do not track actions which match 
+                                                receiver:action:actor. Receiver, 
+                                                Action, & Actor may be blank to exclude
+                                                all.
 ```
 
 ## TODO
