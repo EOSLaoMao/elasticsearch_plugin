@@ -24,6 +24,14 @@ Detail: [Benchmark](./benchmark/benchmark.md)
 
 ## Performance Tuning
 
+Example filters:
+
+```text
+--elastic-filter-out=eosio:onblock:
+--elastic-filter-out=gu2tembqgage::
+--elastic-filter-out=blocktwitter::
+```
+
 [Tune for indexing speed](https://www.elastic.co/guide/en/elasticsearch/reference/master/tune-for-indexing-speed.html)
 
 In the benchmark, `elasticsearch_plugin` is running with default config. For production deploy, you can tweak some config.
@@ -137,6 +145,6 @@ Config Options for eosio::elasticsearch_plugin:
 
 ## TODO
 
-- [ ] Imporve filer-on and filer-out feature, see: [https://github.com/EOSIO/eos/pull/5670](https://github.com/EOSIO/eos/pull/5670)
+- [x] Imporve filer-on and filer-out feature, see: [https://github.com/EOSIO/eos/pull/5670](https://github.com/EOSIO/eos/pull/5670)
 - [ ] Due to `libcurl` [100-continue feature](https://curl.haxx.se/mail/lib-2017-07/0013.html), consider replace [EOSLaoMao/elasticlient](https://github.com/EOSLaoMao/elasticlient) with other simple http client like [https://cpp-netlib.org/#](https://cpp-netlib.org/#)
 - [ ] Improve multi-thread efficiency.
