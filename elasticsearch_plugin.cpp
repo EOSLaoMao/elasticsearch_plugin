@@ -50,11 +50,16 @@ struct filter_entry {
    name receiver;
    name action;
    name actor;
-   std::tuple<name, name, name> key() const {
-      return std::make_tuple(receiver, action, actor);
-   }
+
    friend bool operator<( const filter_entry& a, const filter_entry& b ) {
-      return a.key() < b.key();
+      return std::tie( a.receiver, a.action, a.actor ) < std::tie( b.receiver, b.action, b.actor );
+   }
+
+   //            receiver          action       actor
+   bool match( const name& rr, const name& an, const name& ar ) const {
+      return (receiver.value == 0 || receiver == rr) &&
+             (action.value == 0 || action == an) &&
+             (actor.value == 0 || actor == ar);
    }
 };
 
@@ -91,8 +96,8 @@ public:
    void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
    void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
 
-   /// @return true if act should be added to elasticsearch, false to skip it
-   bool filter_include( const chain::action& act ) const;
+   /// @return true if act should be added to mongodb, false to skip it
+   bool filter_include( const chain::action_trace& action_trace ) const;
 
    void init();
    void delete_index();
@@ -166,32 +171,43 @@ const std::string elasticsearch_plugin_impl::block_states_index = "block_states"
 const std::string elasticsearch_plugin_impl::trans_traces_index = "transaction_traces";
 const std::string elasticsearch_plugin_impl::action_traces_index = "action_traces";
 
-bool elasticsearch_plugin_impl::filter_include( const chain::action& act ) const {
+bool elasticsearch_plugin_impl::filter_include( const chain::action_trace& action_trace ) const {
    bool include = false;
-   if( filter_on_star || filter_on.find( {act.account, act.name, 0} ) != filter_on.end() ) {
+   if( filter_on_star ) {
       include = true;
    } else {
-      for( const auto& a : act.authorization ) {
-         if( filter_on.find( {act.account, act.name, a.actor} ) != filter_on.end() ) {
-            include = true;
-            break;
+      auto itr = std::find_if( filter_on.cbegin(), filter_on.cend(), [&action_trace]( const auto& filter ) {
+         return filter.match( action_trace.receipt.receiver, action_trace.act.name, 0 );
+      } );
+      if( itr != filter_on.cend() ) {
+         include = true;
+      } else {
+         for( const auto& a : action_trace.act.authorization ) {
+            auto itr = std::find_if( filter_on.cbegin(), filter_on.cend(), [&action_trace, &a]( const auto& filter ) {
+               return filter.match( action_trace.receipt.receiver, action_trace.act.name, a.actor );
+            } );
+            if( itr != filter_on.cend() ) {
+               include = true;
+               break;
+            }
          }
       }
    }
 
    if( !include ) { return false; }
 
-   if( filter_out.find( {act.account, 0, 0} ) != filter_out.end() ) {
-      return false;
+   auto itr = std::find_if( filter_out.cbegin(), filter_out.cend(), [&action_trace]( const auto& filter ) {
+      return filter.match( action_trace.receipt.receiver, action_trace.act.name, 0 );
+   } );
+   if( itr != filter_out.cend() ) { return false; }
+
+   for( const auto& a : action_trace.act.authorization ) {
+      auto itr = std::find_if( filter_out.cbegin(), filter_out.cend(), [&action_trace, &a]( const auto& filter ) {
+         return filter.match( action_trace.receipt.receiver, action_trace.act.name, a.actor );
+      } );
+      if( itr != filter_out.cend() ) { return false; }
    }
-   if( filter_out.find( {act.account, act.name, 0} ) != filter_out.end() ) {
-      return false;
-   }
-   for( const auto& a : act.authorization ) {
-      if( filter_out.find( {act.account, act.name, a.actor} ) != filter_out.end() ) {
-         return false;
-      }
-   }
+
    return true;
 }
 
@@ -853,7 +869,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
                upsert_account( account_upsert_actions, atrace.act );
          }
 
-         if( start_block_reached && store_action_traces && filter_include( atrace.act ) ) {
+         if( start_block_reached && store_action_traces && filter_include( atrace ) ) {
                base_action_traces.emplace_back(atrace);
          }
 
@@ -1104,7 +1120,7 @@ elasticsearch_plugin::~elasticsearch_plugin(){}
 
 void elasticsearch_plugin::set_program_options(options_description&, options_description& cfg) {
    cfg.add_options()
-         ("elastic-queue-size,q", bpo::value<uint32_t>()->default_value(512),
+         ("elastic-queue-size,q", bpo::value<uint32_t>()->default_value(1024),
          "The target queue size between nodeos and elasticsearch plugin thread.")
          ("elastic-abi-cache-size", bpo::value<uint32_t>()->default_value(2048),
           "The maximum size of the abi cache for serializing data.")
@@ -1112,8 +1128,8 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
           "The size of the data processing thread pool.")
          ("elastic-bulker-pool-size", bpo::value<size_t>()->default_value(2),
           "The size of the elasticsearch bulker pool.")
-         ("elastic-bulk-size", bpo::value<size_t>()->default_value(1000),
-          "The size of the each bulk request, count by num of documents.")
+         ("elastic-bulk-size", bpo::value<size_t>()->default_value(5),
+          "The size(megabytes) of the each bulk request.")
          ("elastic-index-wipe", bpo::bool_switch()->default_value(false),
          "Required with --replay-blockchain, --hard-replay-blockchain, or --delete-all-blocks to delete elasticsearch index."
          "This option required to prevent accidental wipe of index.")
@@ -1135,10 +1151,10 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
           "Enables storing transaction traces in elasticsearch.")
          ("elastic-store-action-traces", bpo::value<bool>()->default_value(true),
           "Enables storing action traces in elasticsearch.")
-         ("elasticsearch-filter-on", bpo::value<vector<string>>()->composing(),
-          "elasticsearch: Track actions which match receiver:action:actor. Actor may be blank to include all. Receiver and Action may not be blank. Default is * include everything.")
-         ("elasticsearch-filter-out", bpo::value<vector<string>>()->composing(),
-          "elasticsearch: Do not track actions which match receiver:action:actor. Action and Actor both blank excludes all from reciever. Actor blank excludes all from reciever:action. Receiver may not be blank.")
+         ("elastic-filter-on", bpo::value<vector<string>>()->composing(),
+          "Track actions which match receiver:action:actor. Receiver, Action, & Actor may be blank to include all. i.e. eosio:: or :transfer:  Use * or leave unspecified to include all.")
+         ("elastic-filter-out", bpo::value<vector<string>>()->composing(),
+          "Do not track actions which match receiver:action:actor. Receiver, Action, & Actor may be blank to exclude all.")
          ;
 }
 
@@ -1188,7 +1204,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          if( options.count( "elastic-store-action-traces" )) {
             my->store_action_traces = options.at( "elastic-store-action-traces" ).as<bool>();
          }
-         if( options.count( "elastic-filter-on" )) {
+        if( options.count( "elastic-filter-on" )) {
             auto fo = options.at( "elastic-filter-on" ).as<vector<string>>();
             my->filter_on_star = false;
             for( auto& s : fo ) {
@@ -1200,8 +1216,6 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                boost::split( v, s, boost::is_any_of( ":" ));
                EOS_ASSERT( v.size() == 3, fc::invalid_arg_exception, "Invalid value ${s} for --elastic-filter-on", ("s", s));
                filter_entry fe{v[0], v[1], v[2]};
-               EOS_ASSERT( fe.receiver.value && fe.action.value, fc::invalid_arg_exception,
-                           "Invalid value ${s} for --elastic-filter-on", ("s", s));
                my->filter_on.insert( fe );
             }
          } else {
@@ -1214,8 +1228,6 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                boost::split( v, s, boost::is_any_of( ":" ));
                EOS_ASSERT( v.size() == 3, fc::invalid_arg_exception, "Invalid value ${s} for --elastic-filter-out", ("s", s));
                filter_entry fe{v[0], v[1], v[2]};
-               EOS_ASSERT( fe.receiver.value, fc::invalid_arg_exception,
-                           "Invalid value ${s} for --elastic-filter-out", ("s", s));
                my->filter_out.insert( fe );
             }
          }
@@ -1237,8 +1249,8 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str) );
          ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
          my->thr_pool.reset( new boost::asio::thread_pool(thr_pool_size) );
-         ilog("init bulker pool, size: ${bps}, bulk size: ${bs}", ("bps", bulk_pool_size)("bs", bulk_size));
-         my->bulk_pool.reset( new bulker_pool(bulk_pool_size, bulk_size, std::vector<std::string>({url_str}), user_str, password_str) );
+         ilog("init bulker pool, size: ${bps}, bulk size: ${bs}mb", ("bps", bulk_pool_size)("bs", bulk_size));
+         my->bulk_pool.reset( new bulker_pool(bulk_pool_size, bulk_size * 1024 * 1024, std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller
          chain_plugin* chain_plug = app().find_plugin<chain_plugin>();
