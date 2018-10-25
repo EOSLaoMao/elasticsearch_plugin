@@ -567,46 +567,48 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
          std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
-   auto source =
-      "if (!ctx._source.containsKey(\"block_num\")) ctx._source.block_num = params.block_num;"
-      "if (!ctx._source.containsKey(\"block_id\")) ctx._source.block_id = params.block_id;"
-      "if (!ctx._source.containsKey(\"validated\")) ctx._source.validated = params.validated;"
-      "if (!ctx._source.containsKey(\"block_header_state\")) ctx._source.block_header_state = params.block_header_state;"
-      "ctx._source.createAt = params.createAt;";
+   if( store_block_states ) {
+      auto source =
+            "if (!ctx._source.containsKey(\"block_num\")) ctx._source.block_num = params.block_num;"
+            "if (!ctx._source.containsKey(\"block_id\")) ctx._source.block_id = params.block_id;"
+            "if (!ctx._source.containsKey(\"validated\")) ctx._source.validated = params.validated;"
+            "if (!ctx._source.containsKey(\"block_header_state\")) ctx._source.block_header_state = params.block_header_state;"
+            "ctx._source.createAt = params.createAt;";
 
-   fc::mutable_variant_object doc;
-   fc::mutable_variant_object params_doc;
-   fc::mutable_variant_object script_doc;
+      fc::mutable_variant_object doc;
+      fc::mutable_variant_object params_doc;
+      fc::mutable_variant_object script_doc;
 
-   params_doc("block_num", static_cast<int32_t>(block_num));
-   params_doc("block_id", block_id_str);
-   params_doc("validated", bs->validated);
-   params_doc("block_header_state", bs);
-   params_doc("createAt", now.count());
+      params_doc("block_num", static_cast<int32_t>(block_num));
+      params_doc("block_id", block_id_str);
+      params_doc("validated", bs->validated);
+      params_doc("block_header_state", bs);
+      params_doc("createAt", now.count());
 
-   script_doc("source", source);
-   script_doc("lang", "painless");
-   script_doc("params", params_doc);
+      script_doc("source", source);
+      script_doc("lang", "painless");
+      script_doc("params", params_doc);
 
-   doc("script", script_doc);
-   doc("scripted_upsert", true);
-   doc("upsert", fc::variant_object());
+      doc("script", script_doc);
+      doc("scripted_upsert", true);
+      doc("upsert", fc::variant_object());
 
-   boost::asio::post( *thr_pool,
-      [ doc{std::move(doc)}, block_id_str, this ]()
-      {
-         fc::mutable_variant_object action_doc;
-         action_doc("_index", block_states_index);
-         action_doc("_type", "_doc");
-         action_doc("_id", block_id_str);
-         action_doc("retry_on_conflict", 100);
+      boost::asio::post( *thr_pool,
+         [ doc{std::move(doc)}, block_id_str, this ]()
+         {
+            fc::mutable_variant_object action_doc;
+            action_doc("_index", block_states_index);
+            action_doc("_type", "_doc");
+            action_doc("_id", block_id_str);
+            action_doc("retry_on_conflict", 100);
 
-         auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
-         auto json = fc::json::to_string( doc );
+            auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
+            auto json = fc::json::to_string( doc );
 
-         bulker& bulk = bulk_pool->get();
-         bulk.append_document(std::move(action), std::move(json));
-      });
+            bulker& bulk = bulk_pool->get();
+            bulk.append_document(std::move(action), std::move(json));
+         });
+   }
 
    if( store_blocks ) {
 
