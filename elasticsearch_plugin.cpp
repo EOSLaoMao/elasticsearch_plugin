@@ -594,8 +594,8 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
       doc("upsert", fc::variant_object());
 
       boost::asio::post( *thr_pool,
-            [ doc{std::move(doc)}, block_id_str, this ]()
-            {
+         [ doc{std::move(doc)}, block_id_str, this ]()
+         {
             fc::mutable_variant_object action_doc;
             action_doc("_index", block_states_index);
             action_doc("_type", "_doc");
@@ -607,7 +607,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( const chain::block_stat
 
             bulker& bulk = bulk_pool->get();
             bulk.append_document(std::move(action), std::move(json));
-            });
+         });
    }
 
    if( store_blocks ) {
