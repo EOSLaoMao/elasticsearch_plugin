@@ -396,6 +396,7 @@ void elasticsearch_plugin_impl::create_new_account(
    fc::variants account_controls;
 
    param_doc("name", newacc.name.to_string());
+   param_doc("creator", newacc.creator.to_string());
    param_doc("createAt", now.count());
 
    for( const auto& account : newacc.owner.accounts ) {
@@ -495,6 +496,7 @@ void elasticsearch_plugin_impl::upsert_account(
          account_id = newacc.name.value;
          upsert_script =
             "ctx._source.name = params[\"%1%\"].name;"
+            "ctx._source.creator = params[\"%1%\"].creator;"
             "ctx._source.pub_keys = params[\"%1%\"].pub_keys;"
             "ctx._source.account_controls = params[\"%1%\"].account_controls;"
             "ctx._source.createAt = params[\"%1%\"].createAt;";

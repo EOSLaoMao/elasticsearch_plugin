@@ -10,6 +10,9 @@ const static std::string accounts_mapping = R"(
                 "name": {
                     "type": "text"
                 },
+                "creator": {
+                    "type": "text"
+                },
                 "pub_keys": {
                     "type": "nested"
                 },
