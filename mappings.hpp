@@ -19,7 +19,7 @@ const static std::string accounts_mapping = R"(
                 "abi": {
                     "enabled": false
                 },
-                "ceateAt": {
+                "createAt": {
                     "type": "date"
                 },
                 "updateAt": {
