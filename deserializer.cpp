@@ -8,6 +8,7 @@ namespace eosio
 {
 
 void deserializer::purge_abi_cache() {
+   std::lock_guard<std::mutex> gurad(cache_mtx);
    if( abi_cache_index.size() < abi_cache_size ) return;
 
    // remove the oldest (smallest) last accessed
@@ -19,6 +20,7 @@ void deserializer::purge_abi_cache() {
 }
 
 optional<fc::variant> deserializer::get_abi_by_account(const account_name &name) {
+   std::lock_guard<std::mutex> gurad(client_mtx);
    fc::variant res;
    try {
       es_client.get("accounts", std::to_string(name.value), res);
@@ -33,6 +35,7 @@ optional<fc::variant> deserializer::get_abi_by_account(const account_name &name)
 }
 
 optional<abi_serializer> deserializer::find_abi_cache(const account_name &name) {
+   std::lock_guard<std::mutex> gurad(cache_mtx);
    auto itr = abi_cache_index.find( name );
    if( itr != abi_cache_index.end() ) {
       abi_cache_index.modify( itr, []( auto& entry ) {
@@ -45,11 +48,13 @@ optional<abi_serializer> deserializer::find_abi_cache(const account_name &name) 
 }
 
 void deserializer::insert_abi_cache( const abi_cache &entry ) {
+   std::lock_guard<std::mutex> gurad(cache_mtx);
    abi_cache_index.insert( entry );
 }
 
 
 void deserializer::erase_abi_cache(const account_name &name) {
+   std::lock_guard<std::mutex> gurad(cache_mtx);
    abi_cache_index.erase( name );
 }
 

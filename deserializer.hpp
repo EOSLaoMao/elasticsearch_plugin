@@ -54,6 +54,9 @@ private:
    abi_cache_index_t abi_cache_index;
    fc::microseconds abi_serializer_max_time;
 
+   std::mutex client_mtx;
+   std::mutex cache_mtx;
+
    elastic_client es_client;
 
 };
