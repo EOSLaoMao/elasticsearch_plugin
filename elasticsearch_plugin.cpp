@@ -76,6 +76,8 @@ public:
 
    void consume_blocks();
 
+   void check_task_queue_size();
+
    void accepted_block( const chain::block_state_ptr& );
    void applied_irreversible_block(const chain::block_state_ptr&);
    void accepted_transaction(const chain::transaction_metadata_ptr&);
@@ -125,6 +127,8 @@ public:
    std::unique_ptr<deserializer> abi_deserializer;
    std::unique_ptr<bulker_pool> bulk_pool;
    std::unique_ptr<ThreadPool> thread_pool;
+   size_t max_task_queue_size = 0;
+   int task_queue_sleep_time = 0;
 
    size_t max_queue_size = 0;
    int queue_sleep_time = 0;
@@ -625,7 +629,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
    }
 
    if( base_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
-
+   check_task_queue_size();
    thread_pool->enqueue(
       [ t{std::move(t)}, base_action_traces{std::move(base_action_traces)}, this ]()
       {
@@ -681,6 +685,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
 }
 
 void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transaction_metadata_ptr t ) {
+   check_task_queue_size();
    thread_pool->enqueue(
       [ t{std::move(t)}, this ]()
       {
@@ -732,6 +737,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
 }
 
 void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr bs ) {
+   check_task_queue_size();
    thread_pool->enqueue(
       [ bs{std::move(bs)}, this ]()
       {
@@ -828,6 +834,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr 
 }
 
 void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_ptr bs) {
+   check_task_queue_size();
    thread_pool->enqueue(
       [ bs{std::move(bs)}, this ]()
       {
@@ -950,6 +957,20 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
          }
       }
    );
+}
+
+void elasticsearch_plugin_impl::check_task_queue_size() {
+   auto task_queue_size = thread_pool->queue_size();
+   // dlog("task queue size: ${s}", ("s", task_queue_size));
+   if( task_queue_size > max_task_queue_size ) {
+      task_queue_sleep_time += 10;
+      if( task_queue_sleep_time > 1000 )
+         wlog("thread pool task queue size: ${q}", ("q", task_queue_size));
+      boost::this_thread::sleep_for( boost::chrono::milliseconds( task_queue_sleep_time ));
+   } else {
+      task_queue_sleep_time -= 10;
+      if( task_queue_sleep_time < 0 ) task_queue_sleep_time = 0;
+   }
 }
 
 void elasticsearch_plugin_impl::consume_blocks() {
@@ -1237,8 +1258,11 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          my->es_client.reset( new elastic_client(std::vector<std::string>({url_str}), user_str, password_str) );
          my->abi_deserializer.reset( new deserializer(
                my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str) );
+
          ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
          my->thread_pool.reset( new ThreadPool(thr_pool_size) );
+         my->max_task_queue_size = my->max_queue_size;
+
          ilog("init bulker pool, size: ${bps}, bulk size: ${bs}mb", ("bps", bulk_pool_size)("bs", bulk_size));
          my->bulk_pool.reset( new bulker_pool(bulk_pool_size, bulk_size * 1024 * 1024, std::vector<std::string>({url_str}), user_str, password_str) );
 
