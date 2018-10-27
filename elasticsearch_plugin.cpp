@@ -90,8 +90,9 @@ public:
 
    void upsert_account(
          std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
-         const chain::action& act );
-   void create_new_account( fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now );
+         const chain::action& act, const chain::block_timestamp_type& block_time );
+   void create_new_account( fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now,
+         const chain::block_timestamp_type& block_time );
    void update_account_auth( fc::mutable_variant_object& param_doc, const chain::updateauth& update, std::chrono::milliseconds& now );
    void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
    void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
@@ -390,12 +391,15 @@ void elasticsearch_plugin_impl::process_accepted_block( const chain::block_state
 }
 
 void elasticsearch_plugin_impl::create_new_account(
-   fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now )
+   fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now,
+   const chain::block_timestamp_type& block_time )
 {
    fc::variants pub_keys;
    fc::variants account_controls;
 
    param_doc("name", newacc.name.to_string());
+   param_doc("creator", newacc.creator.to_string());
+   param_doc("account_create_time", block_time);
    param_doc("createAt", now.count());
 
    for( const auto& account : newacc.owner.accounts ) {
@@ -475,7 +479,7 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
 
 void elasticsearch_plugin_impl::upsert_account(
       std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
-      const chain::action& act )
+      const chain::action& act, const chain::block_timestamp_type& block_time )
 {
    if (act.account != chain::config::system_account_name)
       return;
@@ -491,10 +495,12 @@ void elasticsearch_plugin_impl::upsert_account(
       if( act.name == newaccount ) {
          auto newacc = act.data_as<chain::newaccount>();
 
-         create_new_account(param_doc, newacc, now);
+         create_new_account(param_doc, newacc, now, block_time);
          account_id = newacc.name.value;
          upsert_script =
             "ctx._source.name = params[\"%1%\"].name;"
+            "ctx._source.creator = params[\"%1%\"].creator;"
+            "ctx._source.account_create_time = params[\"%1%\"].account_create_time;"
             "ctx._source.pub_keys = params[\"%1%\"].pub_keys;"
             "ctx._source.account_controls = params[\"%1%\"].account_controls;"
             "ctx._source.createAt = params[\"%1%\"].createAt;";
@@ -868,7 +874,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( const chain::trans
          stack.pop();
 
          if( executed && atrace.receipt.receiver == chain::config::system_account_name ) {
-               upsert_account( account_upsert_actions, atrace.act );
+               upsert_account( account_upsert_actions, atrace.act, atrace.block_time );
          }
 
          if( start_block_reached && store_action_traces && filter_include( atrace ) ) {

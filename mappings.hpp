@@ -10,6 +10,9 @@ const static std::string accounts_mapping = R"(
                 "name": {
                     "type": "text"
                 },
+                "creator": {
+                    "type": "text"
+                },
                 "pub_keys": {
                     "type": "nested"
                 },
@@ -18,6 +21,9 @@ const static std::string accounts_mapping = R"(
                 },
                 "abi": {
                     "enabled": false
+                },
+                "account_create_time": {
+                    "type": "date"
                 },
                 "createAt": {
                     "type": "date"
