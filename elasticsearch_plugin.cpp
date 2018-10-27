@@ -102,7 +102,9 @@ public:
    void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
 
    /// @return true if act should be added to elasticsearch, false to skip it
-   bool filter_include( const chain::action_trace& action_trace ) const;
+   bool filter_include( const account_name& receiver, const action_name& act_name,
+                        const vector<chain::permission_level>& authorization ) const;
+   bool filter_include( const transaction& trx ) const;
 
    void init();
    void delete_index();
@@ -178,20 +180,22 @@ const std::string elasticsearch_plugin_impl::block_states_index = "block_states"
 const std::string elasticsearch_plugin_impl::trans_traces_index = "transaction_traces";
 const std::string elasticsearch_plugin_impl::action_traces_index = "action_traces";
 
-bool elasticsearch_plugin_impl::filter_include( const chain::action_trace& action_trace ) const {
+bool elasticsearch_plugin_impl::filter_include( const account_name& receiver, const action_name& act_name,
+                                           const vector<chain::permission_level>& authorization ) const
+{
    bool include = false;
    if( filter_on_star ) {
       include = true;
    } else {
-      auto itr = std::find_if( filter_on.cbegin(), filter_on.cend(), [&action_trace]( const auto& filter ) {
-         return filter.match( action_trace.receipt.receiver, action_trace.act.name, 0 );
+      auto itr = std::find_if( filter_on.cbegin(), filter_on.cend(), [&receiver, &act_name]( const auto& filter ) {
+         return filter.match( receiver, act_name, 0 );
       } );
       if( itr != filter_on.cend() ) {
          include = true;
       } else {
-         for( const auto& a : action_trace.act.authorization ) {
-            auto itr = std::find_if( filter_on.cbegin(), filter_on.cend(), [&action_trace, &a]( const auto& filter ) {
-               return filter.match( action_trace.receipt.receiver, action_trace.act.name, a.actor );
+         for( const auto& a : authorization ) {
+            auto itr = std::find_if( filter_on.cbegin(), filter_on.cend(), [&receiver, &act_name, &a]( const auto& filter ) {
+               return filter.match( receiver, act_name, a.actor );
             } );
             if( itr != filter_on.cend() ) {
                include = true;
@@ -202,19 +206,43 @@ bool elasticsearch_plugin_impl::filter_include( const chain::action_trace& actio
    }
 
    if( !include ) { return false; }
+   if( filter_out.empty() ) { return true; }
 
-   auto itr = std::find_if( filter_out.cbegin(), filter_out.cend(), [&action_trace]( const auto& filter ) {
-      return filter.match( action_trace.receipt.receiver, action_trace.act.name, 0 );
+   auto itr = std::find_if( filter_out.cbegin(), filter_out.cend(), [&receiver, &act_name]( const auto& filter ) {
+      return filter.match( receiver, act_name, 0 );
    } );
    if( itr != filter_out.cend() ) { return false; }
 
-   for( const auto& a : action_trace.act.authorization ) {
-      auto itr = std::find_if( filter_out.cbegin(), filter_out.cend(), [&action_trace, &a]( const auto& filter ) {
-         return filter.match( action_trace.receipt.receiver, action_trace.act.name, a.actor );
+   for( const auto& a : authorization ) {
+      auto itr = std::find_if( filter_out.cbegin(), filter_out.cend(), [&receiver, &act_name, &a]( const auto& filter ) {
+         return filter.match( receiver, act_name, a.actor );
       } );
       if( itr != filter_out.cend() ) { return false; }
    }
 
+   return true;
+}
+
+bool elasticsearch_plugin_impl::filter_include( const transaction& trx ) const
+{
+   if( !filter_on_star || !filter_out.empty() ) {
+      bool include = false;
+      for( const auto& a : trx.actions ) {
+         if( filter_include( a.account, a.name, a.authorization ) ) {
+            include = true;
+            break;
+         }
+      }
+      if( !include ) {
+         for( const auto& a : trx.context_free_actions ) {
+            if( filter_include( a.account, a.name, a.authorization ) ) {
+               include = true;
+               break;
+            }
+         }
+      }
+      return include;
+   }
    return true;
 }
 
@@ -589,7 +617,8 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             upsert_account( account_upsert_actions, atrace.act, atrace.block_time );
          }
 
-         if( start_block_reached && store_action_traces && filter_include( atrace ) ) {
+         if( start_block_reached && store_action_traces
+            && filter_include( atrace.receipt.receiver, atrace.act.name, atrace.act.authorization ) ) {
             base_action_traces.emplace_back(std::make_pair(action_count, std::ref(atrace)));
          }
          action_count++;
@@ -689,15 +718,17 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
    thread_pool->enqueue(
       [ t{std::move(t)}, this ]()
       {
+         const auto& trx = t->trx;
+         if( !filter_include( trx ) ) return;
+
+         const auto& trx_id = t->id;
+         const auto trx_id_str = trx_id.str();
+
          fc::mutable_variant_object trans_doc;
          fc::mutable_variant_object doc;
 
          auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
-
-         const auto& trx_id = t->id;
-         const auto trx_id_str = trx_id.str();
-         const auto& trx = t->trx;
 
          fc::from_variant( abi_deserializer->to_variant_with_abi( trx ), trans_doc );
          trans_doc("trx_id", trx_id_str);
@@ -924,7 +955,9 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
                   const auto& pt = receipt.trx.get<packed_transaction>();
                   // get id via get_raw_transaction() as packed_transaction.id() mutates internal transaction state
                   const auto& raw = pt.get_raw_transaction();
-                  const auto& id = fc::raw::unpack<transaction>( raw ).id();
+                  const auto& trx = fc::raw::unpack<transaction>( raw );
+                  if( !filter_include( trx ) ) continue;
+                  const auto& id = trx.id();
                   trx_id_str = id.str();
                } else {
                   const auto& id = receipt.trx.get<transaction_id_type>();
@@ -949,7 +982,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
                action_doc("retry_on_conflict", 100);
 
                auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
-                     auto json = fc::json::to_string( doc );
+               auto json = fc::json::to_string( doc );
 
                bulker& bulk = bulk_pool->get();
                bulk.append_document(std::move(action), std::move(json));
