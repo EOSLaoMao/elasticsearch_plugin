@@ -2,12 +2,12 @@
 
 | Replay 10000 Block   | elapse(s) | speed(b/s) |
 | -------------------- |:---------:|:----------:|
-| elasticsearch_plugin | 548       | 18.25      |
+| elasticsearch_plugin | 266       | 37.59      |
 | mongo_db_plugin      | 694       | 14.41      |
 
 | Replay 100000 Block  | elapse(s) | speed(b/s) |
 | -------------------- |:---------:|:----------:|
-| elasticsearch_plugin | 663       | 150.83     |
+| elasticsearch_plugin | 354       | 282.49     |
 | mongo_db_plugin      | 987       | 101.32     |
 
 ## Hardware
