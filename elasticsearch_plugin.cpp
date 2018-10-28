@@ -681,7 +681,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             action_doc("_id", id);
             action_doc("retry_on_conflict", 100);
 
-            auto action = fc::json::to_string( fc::variant_object("create", action_doc) );
+            auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
             auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
 
             bulker& bulk = bulk_pool->get();
@@ -701,7 +701,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             action_doc("_id", trx_id_str);
             action_doc("retry_on_conflict", 100);
 
-            auto action = fc::json::to_string( fc::variant_object("create", action_doc) );
+            auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
             auto json = fc::prune_invalid_utf8( fc::json::to_string( trans_traces_doc ) );
 
             bulker& bulk = bulk_pool->get();
