@@ -996,6 +996,7 @@ void elasticsearch_plugin_impl::check_task_queue_size() {
    auto task_queue_size = thread_pool->queue_size();
    // dlog("task queue size: ${s}", ("s", task_queue_size));
    if( task_queue_size > max_task_queue_size ) {
+      thread_pool->notify_all();
       task_queue_sleep_time += 10;
       if( task_queue_sleep_time > 1000 )
          wlog("thread pool task queue size: ${q}", ("q", task_queue_size));
