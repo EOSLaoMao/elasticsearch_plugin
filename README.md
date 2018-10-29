@@ -38,8 +38,8 @@ In the benchmark, `elasticsearch_plugin` is running with default config. For pro
 
 ```text
   --elastic-abi-cache-size arg (=2048)           The maximum size of the abi cache for serializing data.
-  --elastic-thread-pool-size arg (=4)            The maximum size of the abi cache for.
-  --elastic-bulker-pool-size arg (=2)            The size of the data processing thread.
+  --elastic-thread-pool-size arg (=4)            The size of the data processing thread pool.
+  --elastic-bulker-pool-size arg (=2)            The size of the elasticsearch bulker pool.
   --elastic-bulk-size arg (=5)                   The size(megabytes) of the each bulk request.
 ```
 
