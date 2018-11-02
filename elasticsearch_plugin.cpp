@@ -134,7 +134,6 @@ public:
 
    size_t max_queue_size = 0;
    int queue_sleep_time = 0;
-   size_t abi_cache_size = 0;
    std::deque<chain::transaction_metadata_ptr> transaction_metadata_queue;
    std::deque<chain::transaction_metadata_ptr> transaction_metadata_process_queue;
    std::deque<chain::transaction_trace_ptr> transaction_trace_queue;
@@ -149,7 +148,6 @@ public:
    boost::atomic<bool> done{false};
    boost::atomic<bool> startup{true};
    fc::optional<chain::chain_id_type> chain_id;
-   fc::microseconds abi_serializer_max_time;
 
    static const action_name newaccount;
    static const action_name setabi;
@@ -505,6 +503,8 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
 {
    abi_def abi_def = fc::raw::unpack<chain::abi_def>( setabi.abi );
 
+   abi_deserializer->upsert_abi_cache( setabi.account, abi_def );
+
    param_doc("name", setabi.account.to_string());
    param_doc("abi", abi_def);
    param_doc("updateAt", now.count());
@@ -563,8 +563,6 @@ void elasticsearch_plugin_impl::upsert_account(
       } else if( act.name == setabi ) {
          auto setabi = act.data_as<chain::setabi>();
 
-         abi_deserializer->erase_abi_cache( setabi.account );
-
          upsert_account_setabi(param_doc, setabi, now);
          account_id = setabi.account.value;
          upsert_script =
@@ -597,7 +595,6 @@ void elasticsearch_plugin_impl::upsert_account(
 void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction_trace_ptr t ) {
 
    elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
-
    std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;
    std::vector<std::pair<uint64_t, std::reference_wrapper<chain::base_action_trace>>> base_action_traces; // without inline action traces
 
@@ -1165,12 +1162,8 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
    cfg.add_options()
          ("elastic-queue-size,q", bpo::value<uint32_t>()->default_value(1024),
          "The target queue size between nodeos and elasticsearch plugin thread.")
-         ("elastic-abi-cache-size", bpo::value<uint32_t>()->default_value(2048),
-          "The maximum size of the abi cache for serializing data.")
          ("elastic-thread-pool-size", bpo::value<size_t>()->default_value(4),
           "The size of the data processing thread pool.")
-         ("elastic-bulker-pool-size", bpo::value<size_t>()->default_value(2),
-          "The size of the elasticsearch bulker pool.")
          ("elastic-bulk-size", bpo::value<size_t>()->default_value(5),
           "The size(megabytes) of the each bulk request.")
          ("elastic-index-wipe", bpo::bool_switch()->default_value(false),
@@ -1216,18 +1209,16 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                                  " --elastic-index-wipe will remove EOS index from elasticsearch." );
             }
          }
-
-         if( options.count( "abi-serializer-max-time-ms") == 0 ) {
-            EOS_ASSERT(false, chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
+         if( options.count( "abi-serializer-max-time-ms" )) {
+            uint32_t max_time = options.at( "abi-serializer-max-time-ms" ).as<uint32_t>();
+            EOS_ASSERT(max_time > chain::config::default_abi_serializer_max_time_ms,
+                       chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
+            fc::microseconds abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
+            my->abi_deserializer.reset( new deserializer( abi_serializer_max_time ));
          }
-         my->abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
 
          if( options.count( "elastic-queue-size" )) {
             my->max_queue_size = options.at( "elastic-queue-size" ).as<uint32_t>();
-         }
-         if( options.count( "elastic-abi-cache-size" )) {
-            my->abi_cache_size = options.at( "elastic-abi-cache-size" ).as<uint32_t>();
-            EOS_ASSERT( my->abi_cache_size > 0, chain::plugin_config_exception, "elastic-abi-cache-size > 0 required" );
          }
          if( options.count( "elastic-block-start" )) {
             my->start_block_num = options.at( "elastic-block-start" ).as<uint32_t>();
@@ -1284,23 +1275,21 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          std::string user_str = options.at( "elastic-user" ).as<std::string>();
          std::string password_str = options.at( "elastic-password" ).as<std::string>();
          size_t thr_pool_size = options.at( "elastic-thread-pool-size" ).as<size_t>();
-         size_t bulk_pool_size = options.at( "elastic-bulker-pool-size" ).as<size_t>();
          size_t bulk_size = options.at( "elastic-bulk-size" ).as<size_t>();
 
          my->es_client.reset( new elastic_client(std::vector<std::string>({url_str}), user_str, password_str) );
-         my->abi_deserializer.reset( new deserializer(
-               my->abi_cache_size, my->abi_serializer_max_time, std::vector<std::string>({url_str}), user_str, password_str) );
 
          ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
          my->thread_pool.reset( new ThreadPool(thr_pool_size) );
          my->max_task_queue_size = my->max_queue_size;
 
-         ilog("init bulker pool, size: ${bps}, bulk size: ${bs}mb", ("bps", bulk_pool_size)("bs", bulk_size));
-         my->bulk_pool.reset( new bulker_pool(bulk_pool_size, bulk_size * 1024 * 1024, std::vector<std::string>({url_str}), user_str, password_str) );
+         ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
+         my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
+                              std::vector<std::string>({url_str}), user_str, password_str) );
 
          // hook up to signals on controller
          chain_plugin* chain_plug = app().find_plugin<chain_plugin>();
-         EOS_ASSERT( chain_plug, chain::missing_chain_plugin_exception, ""  );
+         EOS_ASSERT( chain_plug, chain::missing_chain_plugin_exception, "" );
          auto& chain = chain_plug->chain();
          my->chain_id.emplace( chain.get_chain_id());
 
