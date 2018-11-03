@@ -26,7 +26,6 @@ public:
 
 private:
    struct by_account;
-   struct by_last_access;
 
    struct abi_cache {
       account_name                     account;

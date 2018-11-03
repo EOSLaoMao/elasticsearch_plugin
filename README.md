@@ -37,9 +37,7 @@ Example filters:
 In the benchmark, `elasticsearch_plugin` is running with default config. For production deploy, you can tweak some config.
 
 ```text
-  --elastic-abi-cache-size arg (=2048)           The maximum size of the abi cache for serializing data.
   --elastic-thread-pool-size arg (=4)            The size of the data processing thread pool.
-  --elastic-bulker-pool-size arg (=2)            The size of the elasticsearch bulker pool.
   --elastic-bulk-size arg (=5)                   The size(megabytes) of the each bulk request.
 ```
 
@@ -97,17 +95,13 @@ target_link_libraries( ${NODE_EXECUTABLE_NAME}
 
 ## Usage
 
-The usage of `elasticsearch_plugin` is similar to [mongo_db_plugin](https://github.com/EOSIO/eos/tree/master/plugins/mongo_db_plugin).
+The usage of `elasticsearch_plugin` is similar to [mongo_db_plugin](https://github.com/EOSIO/eos/tree/master/plugins/mongo_db_plugin). It is recommended that a large `--abi-serializer-max-time-ms` value be passed into the nodeos running the elasticsearch_plugin as the default abi serializer time limit is not large enough to serialize large blocks.
 
 ```plain
-Config Options for eosio::elasticsearch_plugin:
+Config Options for eosio::elasticsearch_plugin.
   -q [ --elastic-queue-size ] arg (=1024)       The target queue size between nodeos 
                                                 and elasticsearch plugin thread.
-  --elastic-abi-cache-size arg (=2048)          The maximum size of the abi cache for 
-                                                serializing data.
   --elastic-thread-pool-size arg (=4)           The size of the data processing thread 
-                                                pool.
-  --elastic-bulker-pool-size arg (=2)           The size of the elasticsearch bulker 
                                                 pool.
   --elastic-bulk-size arg (=5)                  The size(megabytes) of the each bulk 
                                                 request.
@@ -148,3 +142,4 @@ Config Options for eosio::elasticsearch_plugin:
 ## TODO
 
 - [ ] Due to `libcurl` [100-continue feature](https://curl.haxx.se/mail/lib-2017-07/0013.html), consider replace [EOSLaoMao/elasticlient](https://github.com/EOSLaoMao/elasticlient) with other simple http client like [https://cpp-netlib.org/#](https://cpp-netlib.org/#)
+- [ ] Currently, the plugin will cache all abi information in the RAM. It's not a issue for now. Maybe it is better to embed some LRU cache library in the feature.

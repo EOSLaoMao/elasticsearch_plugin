@@ -22,8 +22,6 @@ optional<abi_serializer> deserializer::get_abi_serializer(const account_name &na
 void deserializer::upsert_abi_cache( const account_name &name, const abi_def& abi ) {
    if( name.good()) {
       try {
-         boost::unique_lock<boost::shared_mutex> lock(cache_mtx);
-         abi_cache_index.erase( name );
          abi_cache entry;
          entry.account = name;
          abi_serializer abis;
@@ -62,6 +60,10 @@ void deserializer::upsert_abi_cache( const account_name &name, const abi_def& ab
          }
 
          entry.serializer.emplace( std::move( abis ) );
+
+
+         boost::unique_lock<boost::shared_mutex> lock(cache_mtx);
+         abi_cache_index.erase( name );
          abi_cache_index.insert( entry );
 
          size_t size = abi_cache_index.size();
