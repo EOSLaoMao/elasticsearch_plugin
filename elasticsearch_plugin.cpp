@@ -23,6 +23,7 @@
 #include <queue>
 #include <stack>
 #include <utility>
+#include <functional>
 #include <unordered_map>
 
 #include "elastic_client.hpp"
@@ -131,6 +132,9 @@ public:
    std::unique_ptr<ThreadPool> thread_pool;
    size_t max_task_queue_size = 0;
    int task_queue_sleep_time = 0;
+
+   std::queue<std::function<void()>> upsert_account_task_queue;
+   boost::mutex upsert_account_task_mtx;
 
    size_t max_queue_size = 0;
    int queue_sleep_time = 0;
@@ -594,7 +598,6 @@ void elasticsearch_plugin_impl::upsert_account(
 
 void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction_trace_ptr t ) {
 
-   elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
    std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;
    std::vector<std::pair<uint64_t, std::reference_wrapper<chain::base_action_trace>>> base_action_traces; // without inline action traces
 
@@ -627,31 +630,50 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
       }
    }
 
-   for( auto& action : account_upsert_actions ) {
+   if ( !account_upsert_actions.empty() ) {
 
-      fc::mutable_variant_object source_doc;
-      fc::mutable_variant_object script_doc;
+      auto f =  [ account_upsert_actions{std::move(account_upsert_actions)}, this ]()
+      {
+         elasticlient::SameIndexBulkData bulk_account_upserts(accounts_index);
+         for( auto& action : account_upsert_actions ) {
 
-      script_doc("lang", "painless");
-      script_doc("source", action.second.first);
-      script_doc("params", action.second.second);
+            fc::mutable_variant_object source_doc;
+            fc::mutable_variant_object script_doc;
 
-      source_doc("scripted_upsert", true);
-      source_doc("upsert", fc::variant_object());
-      source_doc("script", script_doc);
+            script_doc("lang", "painless");
+            script_doc("source", action.second.first);
+            script_doc("params", action.second.second);
 
-      auto id = std::to_string(action.first);
-      auto json = fc::json::to_string(source_doc);
+            source_doc("scripted_upsert", true);
+            source_doc("upsert", fc::variant_object());
+            source_doc("script", script_doc);
 
-      bulk_account_upserts.updateDocument("_doc", id, json);
-   }
+            auto id = std::to_string(action.first);
+            auto json = fc::json::to_string(source_doc);
 
-   if ( !bulk_account_upserts.empty() ) {
-      try {
-         es_client->bulk_perform(bulk_account_upserts);
-      } catch( ... ) {
-         handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
-      }
+            bulk_account_upserts.updateDocument("_doc", id, json);
+         }
+
+         try {
+            es_client->bulk_perform(bulk_account_upserts);
+         } catch( ... ) {
+            handle_elasticsearch_exception( "upsert accounts " + bulk_account_upserts.body(), __LINE__ );
+         }
+      };
+
+      upsert_account_task_queue.emplace( std::move(f) );
+
+      check_task_queue_size();
+      thread_pool->enqueue(
+         [ this ]()
+         {
+            boost::mutex::scoped_lock guard(upsert_account_task_mtx);
+            std::function<void()> task = std::move( upsert_account_task_queue.front() );
+            task();
+            upsert_account_task_queue.pop();
+         }
+      );
+
    }
 
    if( base_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
@@ -1281,7 +1303,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
 
          ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
          my->thread_pool.reset( new ThreadPool(thr_pool_size) );
-         my->max_task_queue_size = my->max_queue_size;
+         my->max_task_queue_size = my->max_queue_size * 8;
 
          ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
          my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
