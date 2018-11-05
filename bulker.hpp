@@ -43,7 +43,7 @@ public:
    bulker& get();
 
 private:
-   std::vector<std::unique_ptr<bulker>> bulker_vec;
+   std::vector<std::unique_ptr<bulker>> bulkers;
    size_t pool_size;
    size_t bulk_size;
    std::atomic<size_t> index {0};

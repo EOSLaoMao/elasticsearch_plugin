@@ -58,7 +58,7 @@ bulker_pool::bulker_pool(size_t size, size_t bulk_size,
                          const std::string &user, const std::string &password): pool_size(size), bulk_size(bulk_size)
 {
    for (int i = 0; i < pool_size; ++i) {
-      bulker_vec.emplace_back( new bulker(bulk_size, url_list, user, password) );
+      bulkers.emplace_back( new bulker(bulk_size, url_list, user, password) );
    }
 }
 
@@ -69,12 +69,12 @@ bulker& bulker_pool::get() {
 
    size_t cur_idx = index % pool_size;
 
-   auto ptr = bulker_vec[cur_idx].get();
+   auto ptr = bulkers[cur_idx].get();
 
    if ( ptr->size() >= bulk_size ) {
       cur_idx = (cur_idx + 1) % pool_size;
       index = cur_idx;
-      return *bulker_vec[cur_idx].get();
+      return *bulkers[cur_idx].get();
    } else {
       return *ptr;
    }

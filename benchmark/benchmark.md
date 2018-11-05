@@ -28,16 +28,18 @@ The MongoDB and Elasticsearch are both running in the docker container with basi
 ### Command-line
 
 ```bash
-./build/programs/nodeos/nodeos --data-dir=dev_config/data \
-    --config-dir=dev_config \
+./build/programs/nodeos/nodeos \
+    --data-dir=data \
+    --config-dir=config \
+    --abi-serializer-max-time-ms=1000000 \
     --replay-blockchain \
     --elastic-url=http://localhost:9200/ \
     --elastic-queue-size=512 \
-    --elastic-abi-cache-size=8192 \
     --elastic-index-wipe
 
-./build/programs/nodeos/nodeos --data-dir=dev_config/data \
-    --config-dir=dev_config \
+./build/programs/nodeos/nodeos \
+    --data-dir=data \
+    --config-dir=config \
     --replay-blockchain \
     --mongodb-uri=mongodb://root:example@localhost:27017/eos?authSource=admin \
     --mongodb-queue-size=512 \
