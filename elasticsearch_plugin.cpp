@@ -1309,7 +1309,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
 
          ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
          my->thread_pool.reset( new ThreadPool(thr_pool_size) );
-         my->max_task_queue_size = my->max_queue_size * 8;
+         my->max_task_queue_size = my->max_queue_size * 16;
 
          ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
          my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
