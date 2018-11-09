@@ -690,6 +690,12 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             fc::mutable_variant_object action_traces_doc;
             chain::base_action_trace &base = p.second.get();
             fc::from_variant( abi_deserializer->to_variant_with_abi( base ), action_traces_doc );
+
+            fc::mutable_variant_object act_doc;
+            fc::from_variant( action_traces_doc["act"], act_doc );
+            act_doc["data"] = fc::json::to_string( act_doc["data"] );
+
+            action_traces_doc["act"] = act_doc;
             action_traces_doc("createAt", now.count());
 
             auto id = boost::str(boost::format("%1%-%2%") % trx_id_str % p.first);
