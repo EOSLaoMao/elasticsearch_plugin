@@ -599,11 +599,10 @@ void elasticsearch_plugin_impl::upsert_account(
 void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction_trace_ptr t ) {
 
    std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;
-   std::vector<std::pair<uint64_t, std::reference_wrapper<chain::base_action_trace>>> base_action_traces; // without inline action traces
+   std::vector<std::reference_wrapper<chain::base_action_trace>> base_action_traces; // without inline action traces
 
    bool executed = t->receipt.valid() && t->receipt->status == chain::transaction_receipt_header::executed;
 
-   uint64_t action_count = 0;
    std::stack<std::reference_wrapper<chain::action_trace>> stack;
    for( auto& atrace : t->action_traces ) {
       stack.emplace(atrace);
@@ -619,9 +618,8 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
 
          if( start_block_reached && store_action_traces
             && filter_include( atrace.receipt.receiver, atrace.act.name, atrace.act.authorization ) ) {
-            base_action_traces.emplace_back(std::make_pair(action_count, std::ref(atrace)));
+            base_action_traces.emplace_back( atrace );
          }
-         action_count++;
 
          auto &inline_traces = atrace.inline_traces;
          for( auto it = inline_traces.rbegin(); it != inline_traces.rend(); ++it ) {
@@ -686,9 +684,9 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
          auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
-         for (auto& p : base_action_traces) {
+         for (auto& atrace : base_action_traces) {
             fc::mutable_variant_object action_traces_doc;
-            chain::base_action_trace &base = p.second.get();
+            chain::base_action_trace &base = atrace.get();
             fc::from_variant( abi_deserializer->to_variant_with_abi( base ), action_traces_doc );
 
             fc::mutable_variant_object act_doc;
@@ -698,12 +696,10 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             action_traces_doc["act"] = act_doc;
             action_traces_doc("createAt", now.count());
 
-            auto id = boost::str(boost::format("%1%-%2%") % trx_id_str % p.first);
-
             fc::mutable_variant_object action_doc;
             action_doc("_index", action_traces_index);
             action_doc("_type", "_doc");
-            action_doc("_id", id);
+            action_doc("_id", action_traces_doc["receipt"]["global_sequence"]);
             action_doc("retry_on_conflict", 100);
 
             auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
