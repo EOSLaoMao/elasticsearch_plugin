@@ -11,7 +11,7 @@ class elastic_client
 {
 public:
    elastic_client(const std::vector<std::string> url_list, const std::string &user, const std::string &password)
-      :client(url_list, user, password, 100000) {};
+      :client(url_list, user, password, std::numeric_limits<int32_t>::max()) {};
 
    void delete_index(const std::string &index_name);
    void init_index(const std::string &index_name, const std::string &mappings);
