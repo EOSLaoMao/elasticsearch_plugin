@@ -29,7 +29,7 @@
 #include "elastic_client.hpp"
 #include "exceptions.hpp"
 #include "mappings.hpp"
-#include "deserializer.hpp"
+#include "serializer.hpp"
 #include "bulker.hpp"
 #include "ThreadPool/ThreadPool.h"
 
@@ -126,10 +126,6 @@ public:
    bool store_transaction_traces = true;
    bool store_action_traces = true;
 
-   std::unique_ptr<elastic_client> es_client;
-   std::unique_ptr<deserializer> abi_deserializer;
-   std::unique_ptr<bulker_pool> bulk_pool;
-   std::unique_ptr<ThreadPool> thread_pool;
    size_t max_task_queue_size = 0;
    int task_queue_sleep_time = 0;
 
@@ -152,6 +148,11 @@ public:
    boost::atomic<bool> done{false};
    boost::atomic<bool> startup{true};
    fc::optional<chain::chain_id_type> chain_id;
+
+   std::unique_ptr<elastic_client> es_client;
+   std::unique_ptr<serializer> serializer;
+   std::unique_ptr<bulker_pool> bulk_pool;
+   std::unique_ptr<ThreadPool> thread_pool;
 
    static const action_name newaccount;
    static const action_name setabi;
@@ -507,7 +508,7 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
 {
    abi_def abi_def = fc::raw::unpack<chain::abi_def>( setabi.abi );
 
-   abi_deserializer->upsert_abi_cache( setabi.account, abi_def );
+   serializer->upsert_abi_cache( setabi.account, abi_def );
 
    param_doc("name", setabi.account.to_string());
    param_doc("abi", abi_def);
@@ -687,7 +688,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
          for (auto& atrace : base_action_traces) {
             fc::mutable_variant_object action_traces_doc;
             chain::base_action_trace &base = atrace.get();
-            fc::from_variant( abi_deserializer->to_variant_with_abi( base ), action_traces_doc );
+            fc::from_variant( serializer->to_variant_with_abi( base ), action_traces_doc );
 
             fc::mutable_variant_object act_doc;
             fc::from_variant( action_traces_doc["act"], act_doc );
@@ -699,7 +700,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             fc::mutable_variant_object action_doc;
             action_doc("_index", action_traces_index);
             action_doc("_type", "_doc");
-            action_doc("_id", action_traces_doc["receipt"]["global_sequence"]);
+            action_doc("_id", base.receipt.global_sequence);
             action_doc("retry_on_conflict", 100);
 
             auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
@@ -713,7 +714,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             // transaction trace index
 
             fc::mutable_variant_object trans_traces_doc;
-            fc::from_variant( abi_deserializer->to_variant_with_abi( *t ), trans_traces_doc );
+            fc::from_variant( serializer->to_variant_with_abi( *t ), trans_traces_doc );
             trans_traces_doc("createAt", now.count());
 
             fc::mutable_variant_object action_doc;
@@ -751,7 +752,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
          auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
 
-         fc::from_variant( abi_deserializer->to_variant_with_abi( trx ), trans_doc );
+         fc::from_variant( serializer->to_variant_with_abi( trx ), trans_doc );
          trans_doc("trx_id", trx_id_str);
 
          fc::variant signing_keys;
@@ -794,7 +795,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr 
       [ bs{std::move(bs)}, this ]()
       {
          auto block_num = bs->block_num;
-         if( block_num % 1000 == 0 )
+         if( block_num % 10000 == 0 )
             ilog( "block_num: ${b}", ("b", block_num) );
 
          const auto block_id = bs->id;
@@ -856,7 +857,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr 
 
             params_doc("block_num", static_cast<int32_t>(block_num));
             params_doc("block_id", block_id_str);
-            params_doc("block", abi_deserializer->to_variant_with_abi( *bs->block ));
+            params_doc("block", serializer->to_variant_with_abi( *bs->block ));
             params_doc("irreversible", false);
             params_doc("createAt", now.count());
 
@@ -946,14 +947,13 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
 
             block_doc("block_num", static_cast<int32_t>(block_num));
             block_doc("block_id", block_id_str);
-            block_doc("block", abi_deserializer->to_variant_with_abi( *bs->block ));
+            block_doc("block", serializer->to_variant_with_abi( *bs->block ));
             block_doc("irreversible", true);
             block_doc("validated", bs->validated);
             block_doc("createAt", now.count());
 
             doc("script", script_doc);
             doc("upsert", block_doc);
-
 
             fc::mutable_variant_object action_doc;
             action_doc("_index", blocks_index);
@@ -1238,7 +1238,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
             EOS_ASSERT(max_time > chain::config::default_abi_serializer_max_time_ms,
                        chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
             fc::microseconds abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
-            my->abi_deserializer.reset( new deserializer( abi_serializer_max_time ));
+            my->serializer.reset( new serializer( app().data_dir() / "abi", abi_serializer_max_time ));
          }
 
          if( options.count( "elastic-queue-size" )) {

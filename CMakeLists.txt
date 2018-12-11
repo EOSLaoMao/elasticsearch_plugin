@@ -2,7 +2,6 @@ file(GLOB HEADERS "include/eosio/elasticsearch_plugin/*.hpp")
 add_library( elasticsearch_plugin
              elasticsearch_plugin.cpp
              elastic_client.cpp
-             deserializer.cpp
              bulker.cpp
              ${HEADERS} )
 
