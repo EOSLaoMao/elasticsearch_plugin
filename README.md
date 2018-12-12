@@ -4,6 +4,13 @@ Nodeos plugin for archiving blockchain data into Elasticsearch, inspired by [mon
 
 **Currently the plugin only work with [official eosio repository](https://github.com/EOSIO/eos).**
 
+## Geting Help
+If you find a bug or think of an improvement please open an issue and let us know!
+- For questions about this project:
+  - [Join our Telegram group][https://t.me/eosesplugin]
+  - [Open an issue][https://github.com/EOSLaoMao/elasticsearch_plugin/issues/new]
+
+
 ## Benchmark
 
 Detail: [Benchmark](./benchmark/benchmark.md)
