@@ -96,11 +96,10 @@ public:
    void upsert_account(
          std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> &account_upsert_actions,
          const chain::action& act, const chain::block_timestamp_type& block_time );
-   void create_new_account( fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now,
-         const chain::block_timestamp_type& block_time );
-   void update_account_auth( fc::mutable_variant_object& param_doc, const chain::updateauth& update, std::chrono::milliseconds& now );
-   void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now );
-   void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now );
+   void create_new_account( fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, const chain::block_timestamp_type& block_time );
+   void update_account_auth( fc::mutable_variant_object& param_doc, const chain::updateauth& update );
+   void delete_account_auth( fc::mutable_variant_object& param_doc, const chain::deleteauth& del );
+   void upsert_account_setabi( fc::mutable_variant_object& param_doc, const chain::setabi& setabi );
 
    /// @return true if act should be added to elasticsearch, false to skip it
    bool filter_include( const account_name& receiver, const action_name& act_name,
@@ -427,7 +426,7 @@ void elasticsearch_plugin_impl::process_accepted_block( chain::block_state_ptr b
 }
 
 void elasticsearch_plugin_impl::create_new_account(
-   fc::mutable_variant_object& param_doc, const chain::newaccount& newacc, std::chrono::milliseconds& now,
+   fc::mutable_variant_object& param_doc, const chain::newaccount& newacc,
    const chain::block_timestamp_type& block_time )
 {
    fc::variants pub_keys;
@@ -436,7 +435,6 @@ void elasticsearch_plugin_impl::create_new_account(
    param_doc("name", newacc.name.to_string());
    param_doc("creator", newacc.creator.to_string());
    param_doc("account_create_time", block_time);
-   param_doc("createAt", now.count());
 
    for( const auto& account : newacc.owner.accounts ) {
       fc::mutable_variant_object account_entry;
@@ -471,7 +469,7 @@ void elasticsearch_plugin_impl::create_new_account(
 }
 
 void elasticsearch_plugin_impl::update_account_auth(
-   fc::mutable_variant_object& param_doc, const chain::updateauth& update, std::chrono::milliseconds& now )
+   fc::mutable_variant_object& param_doc, const chain::updateauth& update)
 {
    fc::variants pub_keys;
    fc::variants account_controls;
@@ -493,18 +491,16 @@ void elasticsearch_plugin_impl::update_account_auth(
    param_doc("permission", update.permission.to_string());
    param_doc("pub_keys", pub_keys);
    param_doc("account_controls", account_controls);
-   param_doc("updateAt", now.count());
 }
 
 void elasticsearch_plugin_impl::delete_account_auth(
-   fc::mutable_variant_object& param_doc, const chain::deleteauth& del, std::chrono::milliseconds& now )
+   fc::mutable_variant_object& param_doc, const chain::deleteauth& del)
 {
    param_doc("permission", del.permission.to_string());
-   param_doc("updateAt", now.count());
 }
 
 void elasticsearch_plugin_impl::upsert_account_setabi(
-   fc::mutable_variant_object& param_doc, const chain::setabi& setabi, std::chrono::milliseconds& now )
+   fc::mutable_variant_object& param_doc, const chain::setabi& setabi)
 {
    abi_def abi_def = fc::raw::unpack<chain::abi_def>( setabi.abi );
 
@@ -512,7 +508,6 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
 
    param_doc("name", setabi.account.to_string());
    param_doc("abi", abi_def);
-   param_doc("updateAt", now.count());
 }
 
 void elasticsearch_plugin_impl::upsert_account(
@@ -522,9 +517,6 @@ void elasticsearch_plugin_impl::upsert_account(
    if (act.account != chain::config::system_account_name)
       return;
 
-   std::chrono::milliseconds now = std::chrono::duration_cast<std::chrono::milliseconds>(
-         std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
-
    uint64_t account_id;
    std::string upsert_script;
    fc::mutable_variant_object param_doc;
@@ -533,47 +525,43 @@ void elasticsearch_plugin_impl::upsert_account(
       if( act.name == newaccount ) {
          auto newacc = act.data_as<chain::newaccount>();
 
-         create_new_account(param_doc, newacc, now, block_time);
+         create_new_account(param_doc, newacc, block_time);
          account_id = newacc.name.value;
          upsert_script =
             "ctx._source.name = params[\"%1%\"].name;"
             "ctx._source.creator = params[\"%1%\"].creator;"
             "ctx._source.account_create_time = params[\"%1%\"].account_create_time;"
             "ctx._source.pub_keys = params[\"%1%\"].pub_keys;"
-            "ctx._source.account_controls = params[\"%1%\"].account_controls;"
-            "ctx._source.createAt = params[\"%1%\"].createAt;";
+            "ctx._source.account_controls = params[\"%1%\"].account_controls;";
 
       } else if( act.name == updateauth ) {
          const auto update = act.data_as<chain::updateauth>();
 
-         update_account_auth(param_doc, update, now);
+         update_account_auth(param_doc, update);
          account_id = update.account.value;
          upsert_script =
             "ctx._source.pub_keys.removeIf(item -> item.permission == params[\"%1%\"].permission);"
             "ctx._source.account_controls.removeIf(item -> item.permission == params[\"%1%\"].permission);"
             "ctx._source.pub_keys.addAll(params[\"%1%\"].pub_keys);"
-            "ctx._source.account_controls.addAll(params[\"%1%\"].account_controls);"
-            "ctx._source.updateAt = params[\"%1%\"].updateAt;";
+            "ctx._source.account_controls.addAll(params[\"%1%\"].account_controls);";
 
       } else if( act.name == deleteauth ) {
          const auto del = act.data_as<chain::deleteauth>();
 
-         delete_account_auth(param_doc, del, now);
+         delete_account_auth(param_doc, del);
          account_id = del.account.value;
          upsert_script =
             "ctx._source.pub_keys.removeIf(item -> item.permission == params[\"%1%\"].permission);"
-            "ctx._source.account_controls.removeIf(item -> item.permission == params[\"%1%\"].permission);"
-            "ctx._source.updateAt = params[\"%1%\"].updateAt;";
+            "ctx._source.account_controls.removeIf(item -> item.permission == params[\"%1%\"].permission);";
 
       } else if( act.name == setabi ) {
          auto setabi = act.data_as<chain::setabi>();
 
-         upsert_account_setabi(param_doc, setabi, now);
+         upsert_account_setabi(param_doc, setabi);
          account_id = setabi.account.value;
          upsert_script =
             "ctx._source.name = params[\"%1%\"].name;"
-            "ctx._source.abi = params[\"%1%\"].abi;"
-            "ctx._source.updateAt = params[\"%1%\"].updateAt;";
+            "ctx._source.abi = params[\"%1%\"].abi;";
       }
 
       if ( !upsert_script.empty() ) {
@@ -682,8 +670,6 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
       {
          const auto& trx_id = t->id;
          const auto trx_id_str = trx_id.str();
-         auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
 
          for (auto& atrace : base_action_traces) {
             fc::mutable_variant_object action_traces_doc;
@@ -695,7 +681,6 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             act_doc["data"] = fc::json::to_string( act_doc["data"] );
 
             action_traces_doc["act"] = act_doc;
-            action_traces_doc("createAt", now.count());
 
             fc::mutable_variant_object action_doc;
             action_doc("_index", action_traces_index);
@@ -715,7 +700,6 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
 
             fc::mutable_variant_object trans_traces_doc;
             fc::from_variant( serializer->to_variant_with_abi( *t ), trans_traces_doc );
-            trans_traces_doc("createAt", now.count());
 
             fc::mutable_variant_object action_doc;
             action_doc("_index", trans_traces_index);
@@ -749,9 +733,6 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
          fc::mutable_variant_object trans_doc;
          fc::mutable_variant_object doc;
 
-         auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()} );
-
          fc::from_variant( serializer->to_variant_with_abi( trx ), trans_doc );
          trans_doc("trx_id", trx_id_str);
 
@@ -769,7 +750,6 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
          trans_doc("accepted", t->accepted);
          trans_doc("implicit", t->implicit);
          trans_doc("scheduled", t->scheduled);
-         trans_doc("createAt", now.count());
 
          doc("doc", trans_doc);
          doc("doc_as_upsert", true);
@@ -801,34 +781,20 @@ void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr 
          const auto block_id = bs->id;
          const auto block_id_str = block_id.str();
 
-         auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
-
          if( store_block_states ) {
-            auto source =
-                  "if (!ctx._source.containsKey(\"block_num\")) ctx._source.block_num = params.block_num;"
-                  "if (!ctx._source.containsKey(\"block_id\")) ctx._source.block_id = params.block_id;"
-                  "if (!ctx._source.containsKey(\"validated\")) ctx._source.validated = params.validated;"
-                  "if (!ctx._source.containsKey(\"block_header_state\")) ctx._source.block_header_state = params.block_header_state;"
-                  "ctx._source.createAt = params.createAt;";
+            auto source = "int v;"; // Do nothing if document already exsit.
 
             fc::mutable_variant_object doc;
-            fc::mutable_variant_object params_doc;
+            fc::mutable_variant_object bs_doc(bs);
             fc::mutable_variant_object script_doc;
 
-            params_doc("block_num", static_cast<int32_t>(block_num));
-            params_doc("block_id", block_id_str);
-            params_doc("validated", bs->validated);
-            params_doc("block_header_state", bs);
-            params_doc("createAt", now.count());
-
+            bs_doc.erase("block");
             script_doc("source", source);
             script_doc("lang", "painless");
-            script_doc("params", params_doc);
 
             doc("script", script_doc);
             doc("scripted_upsert", true);
-            doc("upsert", fc::variant_object());
+            doc("upsert", bs_doc);
 
             fc::mutable_variant_object action_doc;
             action_doc("_index", block_states_index);
@@ -844,37 +810,26 @@ void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr 
          }
 
          if( store_blocks ) {
-            auto source =
-               "if (!ctx._source.containsKey(\"block_num\")) ctx._source.block_num = params.block_num;"
-               "if (!ctx._source.containsKey(\"block_id\")) ctx._source.block_id = params.block_id;"
-               "if (!ctx._source.containsKey(\"block\")) ctx._source.block = params.block;"
-               "if (!ctx._source.containsKey(\"irreversible\")) ctx._source.irreversible = params.irreversible;"
-               "ctx._source.createAt = params.createAt;";
+            auto source = "int v;"; // Do nothing if document already exsit.
 
             fc::mutable_variant_object doc;
-            fc::mutable_variant_object params_doc;
+            fc::mutable_variant_object block_doc;
             fc::mutable_variant_object script_doc;
 
-            params_doc("block_num", static_cast<int32_t>(block_num));
-            params_doc("block_id", block_id_str);
-            params_doc("block", serializer->to_variant_with_abi( *bs->block ));
-            params_doc("irreversible", false);
-            params_doc("createAt", now.count());
+            fc::from_variant(serializer->to_variant_with_abi( *bs->block ), block_doc);
 
             script_doc("source", source);
             script_doc("lang", "painless");
-            script_doc("params", params_doc);
 
             doc("script", script_doc);
             doc("scripted_upsert", true);
-            doc("upsert", fc::variant_object());
+            doc("upsert", block_doc);
 
             fc::mutable_variant_object action_doc;
             action_doc("_index", blocks_index);
             action_doc("_type", "_doc");
             action_doc("_id", block_id_str);
             action_doc("retry_on_conflict", 100);
-
 
             auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
             auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
@@ -895,20 +850,15 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
          const auto block_id_str = block_id.str();
          const auto block_num = bs->block->block_num();
 
-         auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
-
          auto source =
             "ctx._source.validated = params.validated;"
-            "ctx._source.irreversible = params.irreversible;"
-            "ctx._source.updateAt = params.updateAt;";
+            "ctx._source.irreversible = params.irreversible;";
 
          fc::mutable_variant_object params_doc;
          fc::mutable_variant_object script_doc;
 
          params_doc("validated", bs->validated);
          params_doc("irreversible", true);
-         params_doc("updateAt", now.count());
 
          script_doc("source", source);
          script_doc("lang", "painless");
@@ -916,17 +866,13 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
 
          if( store_block_states ) {
             fc::mutable_variant_object doc;
-            fc::mutable_variant_object block_state_doc;
+            fc::mutable_variant_object bs_doc(bs);
 
-            block_state_doc("block_num", static_cast<int32_t>(block_num));
-            block_state_doc("block_id", block_id_str);
-            block_state_doc("block_header_state", bs);
-            block_state_doc("validated", bs->validated);
-            block_state_doc("irreversible", true);
-            block_state_doc("createAt", now.count());
+            bs_doc.erase("block");
+            bs_doc("irreversible", true);
 
             doc("script", script_doc);
-            doc("upsert", block_state_doc);
+            doc("upsert", bs_doc);
 
             fc::mutable_variant_object action_doc;
             action_doc("_index", block_states_index);
@@ -945,12 +891,9 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
             fc::mutable_variant_object doc;
             fc::mutable_variant_object block_doc;
 
-            block_doc("block_num", static_cast<int32_t>(block_num));
-            block_doc("block_id", block_id_str);
-            block_doc("block", serializer->to_variant_with_abi( *bs->block ));
+            fc::from_variant(serializer->to_variant_with_abi( *bs->block ), block_doc);
             block_doc("irreversible", true);
             block_doc("validated", bs->validated);
-            block_doc("createAt", now.count());
 
             doc("script", script_doc);
             doc("upsert", block_doc);
@@ -991,7 +934,6 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
                trans_doc("irreversible", true);
                trans_doc("block_id", block_id_str);
                trans_doc("block_num", static_cast<int32_t>(block_num));
-               trans_doc("updateAt", now.count());
 
                doc("doc", trans_doc);
                doc("doc_as_upsert", true);
@@ -1156,13 +1098,9 @@ void elasticsearch_plugin_impl::init() {
    es_client->init_index( action_traces_index, action_traces_mapping );
 
    if (es_client->count_doc(accounts_index) == 0) {
-      auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::microseconds{fc::time_point::now().time_since_epoch().count()});
-      
       fc::mutable_variant_object account_doc;
       auto acc_name = chain::config::system_account_name;
       account_doc("name", name( acc_name ).to_string());
-      account_doc("createAt", now.count());
       account_doc("pub_keys", fc::variants());
       account_doc("account_controls", fc::variants());
       auto json = fc::json::to_string(account_doc);
