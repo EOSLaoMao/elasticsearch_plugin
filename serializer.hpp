@@ -36,7 +36,7 @@ class serializer
 {
 public:
    serializer(const bfs::path& dir, fc::microseconds abi_serializer_max_time)
-      :db(dir, database::read_write, 1024*1024*8), abi_serializer_max_time(abi_serializer_max_time)
+      :db(dir, database::read_write, 2*1024*1024*1024ll), abi_serializer_max_time(abi_serializer_max_time)
    {
       db.add_index<abi_cache_index_t>();
    }
