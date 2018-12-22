@@ -1126,8 +1126,10 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
          "The target queue size between nodeos and elasticsearch plugin thread.")
          ("elastic-thread-pool-size", bpo::value<size_t>()->default_value(4),
           "The size of the data processing thread pool.")
-         ("elastic-bulk-size", bpo::value<size_t>()->default_value(5),
+         ("elastic-bulk-size-mb", bpo::value<size_t>()->default_value(5),
           "The size(megabytes) of the each bulk request.")
+         ("elastic-abi-db-size-mb", bpo::value<size_t>()->default_value(1024),
+          "Maximum size(megabytes) of the abi database.")
          ("elastic-index-wipe", bpo::bool_switch()->default_value(false),
          "Required with --replay-blockchain, --hard-replay-blockchain, or --delete-all-blocks to delete elasticsearch index."
          "This option required to prevent accidental wipe of index.")
@@ -1176,7 +1178,8 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
             EOS_ASSERT(max_time > chain::config::default_abi_serializer_max_time_ms,
                        chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
             fc::microseconds abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
-            my->serializer.reset( new serializer( app().data_dir() / "abi", abi_serializer_max_time ));
+            auto db_size = options.at( "elastic-abi-db-size-mb" ).as<size_t>();
+            my->serializer.reset(new serializer(app().data_dir() / "abi", abi_serializer_max_time, db_size*1024*1024ll));
          }
 
          if( options.count( "elastic-queue-size" )) {
@@ -1237,13 +1240,13 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          std::string user_str = options.at( "elastic-user" ).as<std::string>();
          std::string password_str = options.at( "elastic-password" ).as<std::string>();
          size_t thr_pool_size = options.at( "elastic-thread-pool-size" ).as<size_t>();
-         size_t bulk_size = options.at( "elastic-bulk-size" ).as<size_t>();
+         size_t bulk_size = options.at( "elastic-bulk-size-mb" ).as<size_t>();
 
          my->es_client.reset( new elastic_client(std::vector<std::string>({url_str}), user_str, password_str) );
 
          ilog("init thread pool, size: ${tps}", ("tps", thr_pool_size));
          my->thread_pool.reset( new ThreadPool(thr_pool_size) );
-         my->max_task_queue_size = my->max_queue_size * 16;
+         my->max_task_queue_size = my->max_queue_size * 8;
 
          ilog("bulk request size: ${bs}mb", ("bs", bulk_size));
          my->bulk_pool.reset( new bulker_pool(thr_pool_size, bulk_size * 1024 * 1024,
