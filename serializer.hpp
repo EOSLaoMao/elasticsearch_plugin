@@ -49,7 +49,7 @@ public:
             if( abi_serializer::to_abi( a.abi, abi ))
                return abi_def_to_serializer(name, abi);
          } catch( std::out_of_range& e) {
-           // ignore missing abi excepton.
+           // ignore missing abi exception.
          } FC_CAPTURE_AND_LOG((name))
       }
       return optional<abi_serializer>();

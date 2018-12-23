@@ -28,7 +28,6 @@
 
 #include "elastic_client.hpp"
 #include "exceptions.hpp"
-#include "mappings.hpp"
 #include "serializer.hpp"
 #include "bulker.hpp"
 #include "ThreadPool/ThreadPool.h"
@@ -107,7 +106,6 @@ public:
    bool filter_include( const transaction& trx ) const;
 
    void init();
-   void delete_index();
 
    template<typename Queue, typename Entry> void queue(Queue& queue, const Entry& e);
 
@@ -564,7 +562,7 @@ void elasticsearch_plugin_impl::upsert_account(
             "ctx._source.abi = params[\"%1%\"].abi;";
       }
 
-      if ( !upsert_script.empty() ) {
+      if ( start_block_reached && !upsert_script.empty() ) {
          auto it = account_upsert_actions.find(account_id);
          if ( it != account_upsert_actions.end() ) {
             auto idx = std::to_string(it->second.second.size());
@@ -1077,25 +1075,14 @@ void elasticsearch_plugin_impl::consume_blocks() {
    }
 }
 
-
-void elasticsearch_plugin_impl::delete_index() {
-   ilog("drop elasticsearch index");
-   es_client->delete_index( accounts_index );
-   es_client->delete_index( blocks_index );
-   es_client->delete_index( trans_index );
-   es_client->delete_index( block_states_index );
-   es_client->delete_index( trans_traces_index );
-   es_client->delete_index( action_traces_index );
-}
-
 void elasticsearch_plugin_impl::init() {
    ilog("create elasticsearch index");
-   es_client->init_index( accounts_index, accounts_mapping );
-   es_client->init_index( blocks_index, blocks_mapping );
-   es_client->init_index( trans_index, trans_mapping );
-   es_client->init_index( block_states_index, block_states_mapping );
-   es_client->init_index( trans_traces_index, trans_traces_mapping );
-   es_client->init_index( action_traces_index, action_traces_mapping );
+   es_client->init_index( accounts_index, "");
+   es_client->init_index( blocks_index, "" );
+   es_client->init_index( trans_index, "" );
+   es_client->init_index( block_states_index, "" );
+   es_client->init_index( trans_traces_index, "" );
+   es_client->init_index( action_traces_index, "" );
 
    if (es_client->count_doc(accounts_index) == 0) {
       fc::mutable_variant_object account_doc;
@@ -1130,9 +1117,6 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
           "The size(megabytes) of the each bulk request.")
          ("elastic-abi-db-size-mb", bpo::value<size_t>()->default_value(1024),
           "Maximum size(megabytes) of the abi database.")
-         ("elastic-index-wipe", bpo::bool_switch()->default_value(false),
-         "Required with --replay-blockchain, --hard-replay-blockchain, or --delete-all-blocks to delete elasticsearch index."
-         "This option required to prevent accidental wipe of index.")
          ("elastic-block-start", bpo::value<uint32_t>()->default_value(0),
          "If specified then only abi data pushed to elasticsearch until specified block is reached.")
          ("elastic-url,u", bpo::value<std::string>(),
@@ -1164,15 +1148,6 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          ilog( "initializing elasticsearch_plugin" );
          my->configured = true;
 
-         if( options.at( "replay-blockchain" ).as<bool>() || options.at( "hard-replay-blockchain" ).as<bool>() || options.at( "delete-all-blocks" ).as<bool>() ) {
-            if( options.at( "elastic-index-wipe" ).as<bool>()) {
-               ilog( "Wiping elascticsearch index on startup" );
-               my->delete_index_on_startup = true;
-            } else if( options.count( "elastic-block-start" ) == 0 ) {
-               EOS_ASSERT( false, chain::plugin_config_exception, "--elastic-index-wipe required with --replay-blockchain, --hard-replay-blockchain, or --delete-all-blocks"
-                                 " --elastic-index-wipe will remove EOS index from elasticsearch." );
-            }
-         }
          if( options.count( "abi-serializer-max-time-ms" )) {
             uint32_t max_time = options.at( "abi-serializer-max-time-ms" ).as<uint32_t>();
             EOS_ASSERT(max_time > chain::config::default_abi_serializer_max_time_ms,
@@ -1274,9 +1249,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
             chain.applied_transaction.connect( [&]( const chain::transaction_trace_ptr& t ) {
                my->applied_transaction( t );
             } ));
-         if( my->delete_index_on_startup ) {
-            my->delete_index();
-         }
+
          my->init();
       } else {
          wlog( "eosio::elasticsearch_plugin configured, but no --elastic-url specified." );
