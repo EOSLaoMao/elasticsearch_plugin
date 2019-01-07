@@ -35,8 +35,8 @@ CHAINBASE_SET_INDEX_TYPE( abi_cache, abi_cache_index_t )
 class serializer
 {
 public:
-   serializer(const bfs::path& dir, fc::microseconds abi_serializer_max_time)
-      :db(dir, database::read_write, 2*1024*1024*1024ll), abi_serializer_max_time(abi_serializer_max_time)
+   serializer(const bfs::path& dir, fc::microseconds abi_serializer_max_time, uint64_t db_size)
+      :db(dir, database::read_write, db_size), abi_serializer_max_time(abi_serializer_max_time)
    {
       db.add_index<abi_cache_index_t>();
    }
@@ -49,7 +49,7 @@ public:
             if( abi_serializer::to_abi( a.abi, abi ))
                return abi_def_to_serializer(name, abi);
          } catch( std::out_of_range& e) {
-           // ignore missing abi excepton.
+           // ignore missing abi exception.
          } FC_CAPTURE_AND_LOG((name))
       }
       return optional<abi_serializer>();
