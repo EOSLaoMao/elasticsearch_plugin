@@ -72,15 +72,15 @@ More detail about curator actions: [elasticsearch-node/curator](https://github.c
 
 It is recommended that the plugin be added to a node that only for data archive purpose. It is also recommended that read-only mode is used to avoid speculative execution. Forked data is still recorded (data that never becomes irreversible) but speculative transaction processing and signaling is avoided minimizing the transaction_traces/action_traces stored.
 
-The elasticsearch plugin is similar to mongodb plugin, action data is stored on chain as raw bytes. This plugin attempts to use associated ABI on accounts to deserialize the raw bytes into explanded abi_def form for storage into elasticsearch. Inside the plugin, ABI information is store in [chainbase](https://github.com/EOSIO/chainbase). The maximum chainbase size is set by option `--elastic-abi-db-size-mb`. Note that invalid or missing abi on a contract will result in the action data being stored as raw bytes. For example the eosio system contract does not provide abi for the onblock action so it is stored as raw bytes.
+The elasticsearch plugin is similar to mongodb plugin, action data is stored on chain as raw bytes. This plugin attempts to use associated ABI on accounts to deserialize the raw bytes into explanded abi_def form for storage into elasticsearch. Inside the plugin, ABI information is store in a [chainbase](https://github.com/EOSIO/chainbase) whose maximum size is controlled by option `--elastic-abi-db-size-mb`. Note that invalid or missing abi on a contract will result in the action data being stored as raw bytes. For example the eosio system contract does not provide abi for the onblock action so it is stored as raw bytes.
 
 A larger `--abi-serializer-max-time-ms` value must be passed into the nodeos running the elasticsearch_plugin as the default abi serializer time limit is not large enough to serialize large blocks.
 
 The plugin send bulk requests from multiple threads. Adjusting thread pool size and bulk request size to make better use of the resources of the cluster.
 
-There several switches to control what kinds of documents the plugin send. In our test run, we choose not to store block data by turn option `elastic-store-block` off.
+There are several switches to control what kinds of documents the plugin send. In our test run, we choose not to store block data by turn option `elastic-store-block` off.
 
-Filter out spam account actions to lower indexing workload or just filter in the specific actions if only interested in certain actions come from certain accounts. Note that transactions that contain only spam actions will also be filtered out.
+Filter out spam account actions to lower indexing workload or just filter in the specific actions if you only interested in certain actions come from certain accounts. Note that transactions that contain only spam actions will also be filtered out.
 
 
 Our nodeos configuration:
