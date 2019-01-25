@@ -722,7 +722,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
    thread_pool->enqueue(
       [ t{std::move(t)}, this ]()
       {
-         const auto& trx = t->trx;
+         const signed_transaction& trx = t->packed_trx->get_signed_transaction();
          if( !filter_include( trx ) ) return;
 
          const auto& trx_id = t->id;
@@ -738,7 +738,9 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
          if( t->signing_keys.valid() ) {
             signing_keys = t->signing_keys->second;
          } else {
-            signing_keys = trx.get_signature_keys( *chain_id, false, false );
+            flat_set<public_key_type> keys;
+            trx.get_signature_keys( *chain_id, fc::time_point::maximum(), keys, false );
+            signing_keys = keys;
          }
 
          if( !signing_keys.is_null() ) {
