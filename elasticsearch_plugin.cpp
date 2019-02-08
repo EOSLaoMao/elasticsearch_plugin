@@ -158,12 +158,13 @@ public:
    static const permission_name owner;
    static const permission_name active;
 
-   static const std::string accounts_index;
-   static const std::string blocks_index;
-   static const std::string trans_index;
-   static const std::string block_states_index;
-   static const std::string trans_traces_index;
-   static const std::string action_traces_index;
+   std::string accounts_index = "accounts";
+   std::string blocks_index = "blocks";
+   std::string trans_index = "transactions";
+   std::string block_states_index = "block_states";
+   std::string trans_traces_index = "transaction_traces";
+   std::string action_traces_index = "action_traces";
+
 };
 
 const action_name elasticsearch_plugin_impl::newaccount = chain::newaccount::get_name();
@@ -173,12 +174,6 @@ const action_name elasticsearch_plugin_impl::deleteauth = chain::deleteauth::get
 const permission_name elasticsearch_plugin_impl::owner = chain::config::owner_name;
 const permission_name elasticsearch_plugin_impl::active = chain::config::active_name;
 
-const std::string elasticsearch_plugin_impl::accounts_index = "accounts";
-const std::string elasticsearch_plugin_impl::blocks_index = "blocks";
-const std::string elasticsearch_plugin_impl::trans_index = "transactions";
-const std::string elasticsearch_plugin_impl::block_states_index = "block_states";
-const std::string elasticsearch_plugin_impl::trans_traces_index = "transaction_traces";
-const std::string elasticsearch_plugin_impl::action_traces_index = "action_traces";
 
 bool elasticsearch_plugin_impl::filter_include( const account_name& receiver, const action_name& act_name,
                                            const vector<chain::permission_level>& authorization ) const
@@ -1141,6 +1136,18 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
           "Track actions which match receiver:action:actor. Receiver, Action, & Actor may be blank to include all. i.e. eosio:: or :transfer:  Use * or leave unspecified to include all.")
          ("elastic-filter-out", bpo::value<vector<string>>()->composing(),
           "Do not track actions which match receiver:action:actor. Receiver, Action, & Actor may be blank to exclude all.")
+         ("elastic-index-accounts", bpo::value<std::string>()->default_value("accounts"),
+          "elasticsearch accounts index name.")
+         ("elastic-index-blocks", bpo::value<std::string>()->default_value("blocks"),
+          "elasticsearch blocks index name.")
+         ("elastic-index-transactions", bpo::value<std::string>()->default_value("transactions"),
+          "elasticsearch transactions index name.")
+         ("elastic-index-block-states", bpo::value<std::string>()->default_value("block_states"),
+          "elasticsearch block_states index name.")
+         ("elastic-index-transaction-traces", bpo::value<std::string>()->default_value("transaction_traces"),
+          "elasticsearch transaction_traces index name.")
+         ("elastic-index-action-traces", bpo::value<std::string>()->default_value("action_traces"),
+          "elasticsearch action_traces index name.")
          ;
 }
 
@@ -1211,6 +1218,13 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          if( my->start_block_num == 0 ) {
             my->start_block_reached = true;
          }
+
+         my->accounts_index = options.at("elastic-index-accounts").as<std::string>();
+         my->blocks_index = options.at("elastic-index-blocks").as<std::string>();
+         my->trans_index = options.at("elastic-index-transactions").as<std::string>();
+         my->block_states_index = options.at("elastic-index-block-states").as<std::string>();
+         my->trans_traces_index = options.at("elastic-index-transaction-traces").as<std::string>();
+         my->action_traces_index = options.at("elastic-index-action-traces").as<std::string>();
 
          std::string url_str = options.at( "elastic-url" ).as<std::string>();
          if ( url_str.back() != '/' ) url_str.push_back('/');

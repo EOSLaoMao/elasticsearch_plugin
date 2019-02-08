@@ -110,40 +110,47 @@ The usage of `elasticsearch_plugin` is similar to [mongo_db_plugin](https://gith
 
 ```plain
 Config Options for eosio::elasticsearch_plugin.
-  -q [ --elastic-queue-size ] arg (=1024)       The target queue size between nodeos 
-                                                and elasticsearch plugin thread.
-  --elastic-thread-pool-size arg (=4)           The size of the data processing thread 
-                                                pool.
-  --elastic-bulk-size-mb arg (=5)               The size(megabytes) of the each bulk 
-                                                request.
-  --elastic-abi-db-size-mb arg (=1024)          Maximum size(megabytes) of the abi 
-                                                database.
-  --elastic-block-start arg (=0)                If specified then only abi data pushed 
-                                                to elasticsearch until specified block 
-                                                is reached.
-  -u [ --elastic-url ] arg                      elasticsearch URL connection string If 
-                                                not specified then plugin is disabled.
-  --elastic-user arg                            elasticsearch user.
-  --elastic-password arg                        elasticsearch password.
-  --elastic-store-blocks arg (=1)               Enables storing blocks in 
-                                                elasticsearch.
-  --elastic-store-block-states arg (=1)         Enables storing block state in 
-                                                elasticsearch.
-  --elastic-store-transactions arg (=1)         Enables storing transactions in 
-                                                elasticsearch.
-  --elastic-store-transaction-traces arg (=1)   Enables storing transaction traces in 
-                                                elasticsearch.
-  --elastic-store-action-traces arg (=1)        Enables storing action traces in 
-                                                elasticsearch.
-  --elastic-filter-on arg                       Track actions which match 
-                                                receiver:action:actor. Receiver, 
-                                                Action, & Actor may be blank to include
-                                                all. i.e. eosio:: or :transfer:  Use * 
-                                                or leave unspecified to include all.
-  --elastic-filter-out arg                      Do not track actions which match 
-                                                receiver:action:actor. Receiver, 
-                                                Action, & Actor may be blank to exclude
-                                                all.
+  -q [ --elastic-queue-size ] arg (=1024)                       The target queue size between nodeos 
+                                                                and elasticsearch plugin thread.
+  --elastic-thread-pool-size arg (=4)                           The size of the data processing thread 
+                                                                pool.
+  --elastic-bulk-size-mb arg (=5)                               The size(megabytes) of the each bulk 
+                                                                request.
+  --elastic-abi-db-size-mb arg (=1024)                          Maximum size(megabytes) of the abi 
+                                                                database.
+  --elastic-block-start arg (=0)                                If specified then only abi data pushed 
+                                                                to elasticsearch until specified block 
+                                                                is reached.
+  -u [ --elastic-url ] arg                                      elasticsearch URL connection string If 
+                                                                not specified then plugin is disabled.
+  --elastic-user arg                                            elasticsearch user.
+  --elastic-password arg                                        elasticsearch password.
+  --elastic-store-blocks arg (=1)                               Enables storing blocks in 
+                                                                elasticsearch.
+  --elastic-store-block-states arg (=1)                         Enables storing block state in 
+                                                                elasticsearch.
+  --elastic-store-transactions arg (=1)                         Enables storing transactions in 
+                                                                elasticsearch.
+  --elastic-store-transaction-traces arg (=1)                   Enables storing transaction traces in 
+                                                                elasticsearch.
+  --elastic-store-action-traces arg (=1)                        Enables storing action traces in 
+                                                                elasticsearch.
+  --elastic-filter-on arg                                       Track actions which match 
+                                                                receiver:action:actor. Receiver, 
+                                                                Action, & Actor may be blank to include
+                                                                all. i.e. eosio:: or :transfer:  Use * 
+                                                                or leave unspecified to include all.
+  --elastic-filter-out arg                                      Do not track actions which match 
+                                                                receiver:action:actor. Receiver, 
+                                                                Action, & Actor may be blank to exclude
+                                                                all.
+  --elastic-index-accounts arg (=accounts)                      elasticsearch accounts index name.
+  --elastic-index-blocks arg (=blocks)                          elasticsearch blocks index name.
+  --elastic-index-transactions arg (=transactions)              elasticsearch transactions index name.
+  --elastic-index-block-states arg (=block_states)              elasticsearch block_states index name.
+  --elastic-index-transaction-traces arg (=transaction_traces)  elasticsearch transaction_traces index  name.
+  --elastic-index-action-traces arg (=action_traces)           elasticsearch action_traces index name.
+
 ```
 
 ## TODO
