@@ -598,8 +598,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             upsert_account( account_upsert_actions, atrace.act, atrace.block_time );
          }
 
-         if( start_block_reached && store_action_traces
-            && filter_include( atrace.receipt.receiver, atrace.act.name, atrace.act.authorization ) ) {
+         if( start_block_reached && filter_include( atrace.receipt.receiver, atrace.act.name, atrace.act.authorization ) ) {
             base_action_traces.emplace_back( atrace );
          }
 
@@ -663,32 +662,33 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
       {
          const auto& trx_id = t->id;
          const auto trx_id_str = trx_id.str();
+         if ( store_action_traces ) {
+            for (auto& atrace : base_action_traces) {
+               fc::mutable_variant_object action_traces_doc;
+               chain::base_action_trace &base = atrace.get();
+               fc::from_variant( serializer->to_variant_with_abi( base ), action_traces_doc );
 
-         for (auto& atrace : base_action_traces) {
-            fc::mutable_variant_object action_traces_doc;
-            chain::base_action_trace &base = atrace.get();
-            fc::from_variant( serializer->to_variant_with_abi( base ), action_traces_doc );
+               fc::mutable_variant_object act_doc;
+               fc::from_variant( action_traces_doc["act"], act_doc );
+               act_doc["data"] = fc::json::to_string( act_doc["data"] );
 
-            fc::mutable_variant_object act_doc;
-            fc::from_variant( action_traces_doc["act"], act_doc );
-            act_doc["data"] = fc::json::to_string( act_doc["data"] );
+               action_traces_doc["act"] = act_doc;
 
-            action_traces_doc["act"] = act_doc;
+               fc::mutable_variant_object action_doc;
+               action_doc("_index", action_traces_index);
+               action_doc("_type", "_doc");
+               action_doc("_id", base.receipt.global_sequence);
+               action_doc("retry_on_conflict", 100);
 
-            fc::mutable_variant_object action_doc;
-            action_doc("_index", action_traces_index);
-            action_doc("_type", "_doc");
-            action_doc("_id", base.receipt.global_sequence);
-            action_doc("retry_on_conflict", 100);
+               auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
+               auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
 
-            auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
-            auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
-
-            bulker& bulk = bulk_pool->get();
-            bulk.append_document(std::move(action), std::move(json));
+               bulker& bulk = bulk_pool->get();
+               bulk.append_document(std::move(action), std::move(json));
+            }
          }
 
-         if( start_block_reached && store_transaction_traces ) {
+         if( store_transaction_traces ) {
             // transaction trace index
 
             fc::mutable_variant_object trans_traces_doc;
@@ -798,7 +798,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr 
             action_doc("retry_on_conflict", 100);
 
             auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
-            auto json = fc::json::to_string( doc );
+            auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
             bulker& bulk = bulk_pool->get();
             bulk.append_document(std::move(action), std::move(json));
@@ -876,7 +876,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
             action_doc("retry_on_conflict", 100);
 
             auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
-            auto json = fc::json::to_string( doc );
+            auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
             bulker& bulk = bulk_pool->get();
             bulk.append_document(std::move(action), std::move(json));
@@ -940,7 +940,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
                action_doc("retry_on_conflict", 100);
 
                auto action = fc::json::to_string( fc::variant_object("update", action_doc) );
-               auto json = fc::json::to_string( doc );
+               auto json = fc::prune_invalid_utf8( fc::json::to_string( doc ) );
 
                bulker& bulk = bulk_pool->get();
                bulk.append_document(std::move(action), std::move(json));
