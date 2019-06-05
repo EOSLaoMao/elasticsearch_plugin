@@ -10,16 +10,13 @@
 #include <fc/variant.hpp>
 #include <fc/variant_object.hpp>
 
-#include <boost/asio.hpp>
-#include <boost/chrono.hpp>
 #include <boost/format.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/signals2/connection.hpp>
-#include <boost/thread/thread.hpp>
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/condition_variable.hpp>
 
 
+#include <thread>
+#include <mutex>
 #include <queue>
 #include <stack>
 #include <utility>
@@ -127,7 +124,7 @@ public:
    int task_queue_sleep_time = 0;
 
    std::queue<std::function<void()>> upsert_account_task_queue;
-   boost::mutex upsert_account_task_mtx;
+   std::mutex upsert_account_task_mtx;
 
    size_t max_queue_size = 0;
    int queue_sleep_time = 0;
@@ -139,11 +136,11 @@ public:
    std::deque<chain::block_state_ptr> block_state_process_queue;
    std::deque<chain::block_state_ptr> irreversible_block_state_queue;
    std::deque<chain::block_state_ptr> irreversible_block_state_process_queue;
-   boost::mutex mtx;
-   boost::condition_variable condition;
-   boost::thread consume_thread;
-   boost::atomic<bool> done{false};
-   boost::atomic<bool> startup{true};
+   std::mutex mtx;
+   std::condition_variable condition;
+   std::thread consume_thread;
+   std::atomic<bool> done{false};
+   std::atomic<bool> startup{true};
    fc::optional<chain::chain_id_type> chain_id;
 
    std::unique_ptr<elastic_client> es_client;
@@ -262,7 +259,7 @@ elasticsearch_plugin_impl::~elasticsearch_plugin_impl()
 
 template<typename Queue, typename Entry>
 void elasticsearch_plugin_impl::queue( Queue& queue, const Entry& e ) {
-   boost::mutex::scoped_lock lock( mtx );
+   std::unique_lock<std::mutex> lock( mtx );
    auto queue_size = queue.size();
    if( queue_size > max_queue_size ) {
       lock.unlock();
@@ -270,7 +267,7 @@ void elasticsearch_plugin_impl::queue( Queue& queue, const Entry& e ) {
       queue_sleep_time += 10;
       if( queue_sleep_time > 1000 )
          wlog("queue size: ${q}", ("q", queue_size));
-      boost::this_thread::sleep_for( boost::chrono::milliseconds( queue_sleep_time ));
+      std::this_thread::sleep_for( std::chrono::milliseconds( queue_sleep_time ));
       lock.lock();
    } else {
       queue_sleep_time -= 10;
@@ -646,7 +643,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
       thread_pool->enqueue(
          [ this ]()
          {
-            boost::mutex::scoped_lock guard(upsert_account_task_mtx);
+            std::unique_lock<std::mutex> guard(upsert_account_task_mtx);
             std::function<void()> task = std::move( upsert_account_task_queue.front() );
             task();
             upsert_account_task_queue.pop();
@@ -730,8 +727,8 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
          trans_doc("trx_id", trx_id_str);
 
          fc::variant signing_keys;
-         if( t->signing_keys.valid() ) {
-            signing_keys = t->signing_keys->second;
+         if( t->signing_keys_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready ) {
+            signing_keys = std::get<2>(t->signing_keys_future.get());
          } else {
             flat_set<public_key_type> keys;
             trx.get_signature_keys( *chain_id, fc::time_point::maximum(), keys, false );
@@ -956,7 +953,7 @@ void elasticsearch_plugin_impl::check_task_queue_size() {
       task_queue_sleep_time += 10;
       if( task_queue_sleep_time > 1000 )
          wlog("thread pool task queue size: ${q}", ("q", task_queue_size));
-      boost::this_thread::sleep_for( boost::chrono::milliseconds( task_queue_sleep_time ));
+      std::this_thread::sleep_for( std::chrono::milliseconds( task_queue_sleep_time ));
    } else {
       task_queue_sleep_time -= 10;
       if( task_queue_sleep_time < 0 ) task_queue_sleep_time = 0;
@@ -966,7 +963,7 @@ void elasticsearch_plugin_impl::check_task_queue_size() {
 void elasticsearch_plugin_impl::consume_blocks() {
    try {
       while (true) {
-         boost::mutex::scoped_lock lock(mtx);
+         std::unique_lock<std::mutex> lock(mtx);
          while ( transaction_metadata_queue.empty() &&
                  transaction_trace_queue.empty() &&
                  block_state_queue.empty() &&
@@ -1096,7 +1093,7 @@ void elasticsearch_plugin_impl::init() {
    }
 
    ilog("starting elasticsearch plugin thread");
-   consume_thread = boost::thread([this] { consume_blocks(); });
+   consume_thread = std::thread([this] { consume_blocks(); });
 
    startup = false;
 }
