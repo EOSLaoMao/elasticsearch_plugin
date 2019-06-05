@@ -144,7 +144,7 @@ public:
    fc::optional<chain::chain_id_type> chain_id;
 
    std::unique_ptr<elastic_client> es_client;
-   std::unique_ptr<serializer> serializer;
+   std::unique_ptr<serializer> es_serializer;
    std::unique_ptr<bulker_pool> bulk_pool;
    std::unique_ptr<ThreadPool> thread_pool;
 
@@ -494,7 +494,7 @@ void elasticsearch_plugin_impl::upsert_account_setabi(
 {
    abi_def abi_def = fc::raw::unpack<chain::abi_def>( setabi.abi );
 
-   serializer->upsert_abi_cache( setabi.account, abi_def );
+   es_serializer->upsert_abi_cache( setabi.account, abi_def );
 
    param_doc("name", setabi.account.to_string());
    param_doc("abi", abi_def);
@@ -578,31 +578,18 @@ void elasticsearch_plugin_impl::upsert_account(
 void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction_trace_ptr t ) {
 
    std::unordered_map<uint64_t, std::pair<std::string, fc::mutable_variant_object>> account_upsert_actions;
-   std::vector<std::reference_wrapper<chain::base_action_trace>> base_action_traces; // without inline action traces
+   std::vector<chain::action_trace> action_traces;
 
    bool executed = t->receipt.valid() && t->receipt->status == chain::transaction_receipt_header::executed;
 
-   std::stack<std::reference_wrapper<chain::action_trace>> stack;
    for( auto& atrace : t->action_traces ) {
-      stack.emplace(atrace);
 
-      while ( !stack.empty() )
-      {
-         auto &atrace = stack.top().get();
-         stack.pop();
+      if( executed && atrace.receiver == chain::config::system_account_name ) {
+         upsert_account( account_upsert_actions, atrace.act, atrace.block_time );
+      }
 
-         if( executed && atrace.receipt.receiver == chain::config::system_account_name ) {
-            upsert_account( account_upsert_actions, atrace.act, atrace.block_time );
-         }
-
-         if( start_block_reached && filter_include( atrace.receipt.receiver, atrace.act.name, atrace.act.authorization ) ) {
-            base_action_traces.emplace_back( atrace );
-         }
-
-         auto &inline_traces = atrace.inline_traces;
-         for( auto it = inline_traces.rbegin(); it != inline_traces.rend(); ++it ) {
-            stack.emplace(*it);
-         }
+      if( start_block_reached && filter_include( atrace.receiver, atrace.act.name, atrace.act.authorization ) ) {
+         action_traces.emplace_back( atrace );
       }
    }
 
@@ -625,7 +612,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             source_doc("script", script_doc);
 
             auto id = std::to_string(action.first);
-            auto json = fc::json::to_string(source_doc);
+            auto json = fc::prune_invalid_utf8( fc::json::to_string(source_doc));
 
             bulk_account_upserts.updateDocument("_doc", id, json);
          }
@@ -652,36 +639,40 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
 
    }
 
-   if( base_action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
+   if( action_traces.empty() ) return; //< do not index transaction_trace if all action_traces filtered out
    check_task_queue_size();
    thread_pool->enqueue(
-      [ t{std::move(t)}, base_action_traces{std::move(base_action_traces)}, this ]()
+      [ t{std::move(t)}, action_traces{std::move(action_traces)}, this ]()
       {
          const auto& trx_id = t->id;
          const auto trx_id_str = trx_id.str();
          if ( store_action_traces ) {
-            for (auto& atrace : base_action_traces) {
-               fc::mutable_variant_object action_traces_doc;
-               chain::base_action_trace &base = atrace.get();
-               fc::from_variant( serializer->to_variant_with_abi( base ), action_traces_doc );
+            for (auto& atrace : action_traces) {
 
-               fc::mutable_variant_object act_doc;
-               fc::from_variant( action_traces_doc["act"], act_doc );
-               act_doc["data"] = fc::json::to_string( act_doc["data"] );
+               if (atrace.receipt.valid()) {
 
-               action_traces_doc["act"] = act_doc;
+                  fc::mutable_variant_object action_traces_doc;
+                  fc::from_variant( es_serializer->to_variant_with_abi( atrace ), action_traces_doc );
 
-               fc::mutable_variant_object action_doc;
-               action_doc("_index", action_traces_index);
-               action_doc("_type", "_doc");
-               action_doc("_id", base.receipt.global_sequence);
-               action_doc("retry_on_conflict", 100);
+                  fc::mutable_variant_object act_doc;
+                  fc::from_variant( action_traces_doc["act"], act_doc );
+                  act_doc["data"] = fc::json::to_string( act_doc["data"] );
 
-               auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
-               auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
+                  action_traces_doc["act"] = act_doc;
 
-               bulker& bulk = bulk_pool->get();
-               bulk.append_document(std::move(action), std::move(json));
+                  fc::mutable_variant_object action_doc;
+                  action_doc("_index", action_traces_index);
+                  action_doc("_type", "_doc");
+                  auto r = *atrace.receipt;
+                  action_doc("_id", r.global_sequence);
+                  action_doc("retry_on_conflict", 100);
+
+                  auto action = fc::json::to_string( fc::variant_object("index", action_doc) );
+                  auto json = fc::prune_invalid_utf8( fc::json::to_string(action_traces_doc) );
+
+                  bulker& bulk = bulk_pool->get();
+                  bulk.append_document(std::move(action), std::move(json));
+               }
             }
          }
 
@@ -689,7 +680,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
             // transaction trace index
 
             fc::mutable_variant_object trans_traces_doc;
-            fc::from_variant( serializer->to_variant_with_abi( *t ), trans_traces_doc );
+            fc::from_variant( es_serializer->to_variant_with_abi( *t ), trans_traces_doc );
 
             fc::mutable_variant_object action_doc;
             action_doc("_index", trans_traces_index);
@@ -723,7 +714,7 @@ void elasticsearch_plugin_impl::_process_accepted_transaction( chain::transactio
          fc::mutable_variant_object trans_doc;
          fc::mutable_variant_object doc;
 
-         fc::from_variant( serializer->to_variant_with_abi( trx ), trans_doc );
+         fc::from_variant( es_serializer->to_variant_with_abi( trx ), trans_doc );
          trans_doc("trx_id", trx_id_str);
 
          fc::variant signing_keys;
@@ -808,7 +799,7 @@ void elasticsearch_plugin_impl::_process_accepted_block( chain::block_state_ptr 
             fc::mutable_variant_object block_doc;
             fc::mutable_variant_object script_doc;
 
-            fc::from_variant(serializer->to_variant_with_abi( *bs->block ), block_doc);
+            fc::from_variant(es_serializer->to_variant_with_abi( *bs->block ), block_doc);
 
             script_doc("source", source);
             script_doc("lang", "painless");
@@ -883,7 +874,7 @@ void elasticsearch_plugin_impl::_process_irreversible_block(chain::block_state_p
             fc::mutable_variant_object doc;
             fc::mutable_variant_object block_doc;
 
-            fc::from_variant(serializer->to_variant_with_abi( *bs->block ), block_doc);
+            fc::from_variant(es_serializer->to_variant_with_abi( *bs->block ), block_doc);
             block_doc("irreversible", true);
             block_doc("validated", bs->validated);
 
@@ -1160,7 +1151,7 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                        chain::plugin_config_exception, "--abi-serializer-max-time-ms required as default value not appropriate for parsing full blocks");
             fc::microseconds abi_serializer_max_time = app().get_plugin<chain_plugin>().get_abi_serializer_max_time();
             auto db_size = options.at( "elastic-abi-db-size-mb" ).as<size_t>();
-            my->serializer.reset(new serializer(app().data_dir() / "abi", abi_serializer_max_time, db_size*1024*1024ll));
+            my->es_serializer.reset(new serializer(app().data_dir() / "abi", abi_serializer_max_time, db_size*1024*1024ll));
          }
 
          if( options.count( "elastic-queue-size" )) {
@@ -1259,8 +1250,8 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
                my->accepted_transaction( t );
             } ));
          my->applied_transaction_connection.emplace(
-            chain.applied_transaction.connect( [&]( const chain::transaction_trace_ptr& t ) {
-               my->applied_transaction( t );
+            chain.applied_transaction.connect( [&]( std::tuple<const chain::transaction_trace_ptr&, const chain::signed_transaction&> t ) {
+               my->applied_transaction( std::get<0>(t) );
             } ));
 
          my->init();

@@ -35,7 +35,7 @@ CHAINBASE_SET_INDEX_TYPE( abi_cache, abi_cache_index_t )
 class serializer
 {
 public:
-   serializer(const bfs::path& dir, fc::microseconds abi_serializer_max_time, uint64_t db_size)
+   serializer(const boost::filesystem::path& dir, fc::microseconds abi_serializer_max_time, uint64_t db_size)
       :db(dir, database::read_write, db_size), abi_serializer_max_time(abi_serializer_max_time)
    {
       db.add_index<abi_cache_index_t>();

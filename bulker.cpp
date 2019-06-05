@@ -57,7 +57,7 @@ bulker_pool::bulker_pool(size_t size, size_t bulk_size,
                          const std::vector<std::string> url_list,
                          const std::string &user, const std::string &password): pool_size(size), bulk_size(bulk_size)
 {
-   for (int i = 0; i < pool_size; ++i) {
+   for (size_t i = 0; i < pool_size; ++i) {
       bulkers.emplace_back( new bulker(bulk_size, url_list, user, password) );
    }
 }
