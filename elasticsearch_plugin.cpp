@@ -119,6 +119,8 @@ public:
    bool store_transactions = true;
    bool store_transaction_traces = true;
    bool store_action_traces = true;
+   bool store_accounts = true;
+
 
    size_t max_task_queue_size = 0;
    int task_queue_sleep_time = 0;
@@ -584,7 +586,7 @@ void elasticsearch_plugin_impl::_process_applied_transaction( chain::transaction
 
    for( auto& atrace : t->action_traces ) {
 
-      if( executed && atrace.receiver == chain::config::system_account_name ) {
+      if( store_accounts && executed && atrace.receiver == chain::config::system_account_name ) {
          upsert_account( account_upsert_actions, atrace.act, atrace.block_time );
       }
 
@@ -1120,6 +1122,8 @@ void elasticsearch_plugin::set_program_options(options_description&, options_des
           "Enables storing transaction traces in elasticsearch.")
          ("elastic-store-action-traces", bpo::value<bool>()->default_value(true),
           "Enables storing action traces in elasticsearch.")
+         ("elastic-store-accounts", bpo::value<bool>()->default_value(true),
+          "Enables storing accounts in elasticsearch.")
          ("elastic-filter-on", bpo::value<vector<string>>()->composing(),
           "Track actions which match receiver:action:actor. Receiver, Action, & Actor may be blank to include all. i.e. eosio:: or :transfer:  Use * or leave unspecified to include all.")
          ("elastic-filter-out", bpo::value<vector<string>>()->composing(),
@@ -1174,6 +1178,9 @@ void elasticsearch_plugin::plugin_initialize(const variables_map& options) {
          }
          if( options.count( "elastic-store-action-traces" )) {
             my->store_action_traces = options.at( "elastic-store-action-traces" ).as<bool>();
+         }
+         if( options.count( "elastic-store-accounts" )) {
+            my->store_accounts = options.at( "elastic-store-accounts" ).as<bool>();
          }
         if( options.count( "elastic-filter-on" )) {
             auto fo = options.at( "elastic-filter-on" ).as<vector<string>>();
